@@ -1,4 +1,4 @@
-const PolkaholicDB = require("./polkaholicDB");
+const ExplorerDB = require("./explorerDB");
 const mysql = require("mysql2");
 var SqlString = require('sqlstring');
 const util = require('util');
@@ -15,9 +15,6 @@ const ethTool = require("./ethTool");
 // [3]:  00000000000000000000000000000000000000000000000000000000617c5b7d
 const Web3 = require('web3')
 const web3 = new Web3();
-const {
-    BigQuery
-} = require('@google-cloud/bigquery');
 
 function generateMethodOutput(methodString) {
     var methodInputs = [];
@@ -122,7 +119,7 @@ const apiToken = "";
   abiType: 'event'
 }
 */
-module.exports = class ABIManager extends PolkaholicDB {
+module.exports = class ABIManager extends ExplorerDB {
 
     methodMap = {};
 

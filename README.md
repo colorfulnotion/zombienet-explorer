@@ -1,33 +1,78 @@
 # ZombieNet Block Explorer
 
-[ZombieNet](https://github.com/paritytech/zombienet) is a cli tool to easily spawn ephemeral Polkadot/Substrate networks and perform tests against them.
-A single ZombieNet is set up with a single toml file (Example: [Astar](https://github.com/AstarNetwork/Astar/blob/master/third-party/zombienet/multi_parachains.toml)) and  relay chain (ie `polkadot`) and parachain binaries (eg `astar`, `moonbeam`, `acala`):
+[ZombieNet](https://github.com/paritytech/zombienet) is a cli tool to easily spawn ephemeral Polkadot/Substrate networks and perform tests against them.  A single ZombieNet is set up with a single toml file and parachain binaries (eg `astar-collator`, `moonbeam`, `acala`, etc.).
 
-```
-./zombienet-linux -p native spawn multi-parachains.toml
-```
-and completes with a set of working WS Endpoints, which can be put into [polkadot.js apps](https://polkadot.js.org/apps/).
-
-ZombieNet Explorer indexes a ZombieNet using purely local setup (just Mysql, no external HTTP API calls).
-It is based off [Polkaholic.io](https://polkaholic.io) which is a Multi-Chain Block Explorer for Polkadot/Kusama and their parachains which uses a Google Cloud backend.
+__ZombieNet Explorer__ indexes a ZombieNet using purely local setup (just
+Mysql, no external HTTP API calls unless you use a non-standard flag).  It is based off
+[Polkaholic.io](https://polkaholic.io) which is a Multi-Chain Block
+Explorer for Polkadot/Kusama and their parachains which uses a Google
+Cloud backend, and is useful to cover some aspects that are not well-covered by the amazing polkadot.js.
+* linking and visualizing different XCM messages / extrinsic
+* EVM + WASM support
+* Simple Mysql analytics 
 
 ## Set up
 
-1. Set up mysql instance with Docker:
+1. Set up mysql instance with Docker and set up ZombieNet explorer tables:
 ```
-TODO
+# docker-compose up -d
+# docker ps -a
+# mysql -P 9093 --protocol=tcp -u root -pzombienet zombienet
+```
+If you have sensitive information in your ZombieNet tests (!), adjust to support your needed security.  
+
+2. Run your ZombieNet
+
+Shibuya/Shiden/Astar Example: [source](https://github.com/AstarNetwork/Astar/blob/master/third-party/zombienet/multi_parachains.toml)
+```
+./zombienet-linux -p native spawn shibuya.toml
 ```
 
-2. Using the above, set up the explorer using
+Moonbase/Moonriver/Moonbeam Example:
 ```
-node explorer.js -base-path /tmp/ multi-parachains.toml 
+./zombienet-linux -p native spawn moonbase.toml
 ```
 
-This will initialize all the mysql tables using the toml f 
-* Block Explorer: http://localhost:3000/ will show you the ZombieNet explorer.  
-* API: http://localhost:3001/ will show you the chains in JSON form.  For API documentation, check the [Polkaholic.io](https://docs.polkaholic.io)
+Your spawned ZombieNet will contain a /tmp directory with a "zombie.json" file:
+```
+/tmp/zombie-3a4c7ea3d3b21c7e47dd8c5ebcb9ff01_-3252492-sI20bG2wx83f/zombie.json
+```
 
-You should then see the "chain" table populated with the relay chain (chainID = 0) and each paraID (e.g. chainID = 2000, 2007).
+3. After your ZombieNet has spawned, set up the explorer supplying the TOML file and the zombie.json 
+
+```
+node explorer.js shibuya.toml /tmp/zombie-3a4c7ea3d3b21c7e47dd8c5ebcb9ff01_-3252492-sI20bG2wx83f/zombie.json
+```
+
+This will use the toml configuration and zombie.json file to initialize any necessary mysql tables and launch a few key processes:
+
+1. ZombieNet Block Explorer: http://localhost:3000/ will show you the ZombieNet explorer!
+2. ZombieNet API: http://localhost:3001/ will show you the chains in JSON form.  For API documentation, check the [Polkaholic.io API](https://docs.polkaholic.io)
+3. Crawlers for each of the chains -- 1 for the the relay chain and 1 for each parachain
+
+Data flow is from the crawlers into Mysql, with the block explorer and API reading data out of Mysql.
+
+You can inspect many of the tables with the following, some of which we highlight below:
+```
+# mysql -P 9093 --protocol=tcp -u root -pzombinet zombinet
+mysql> show tables;
++--------------------------+
+| Tables_in_defi           |
++--------------------------+
+| account                  |
+| address                  |
+| asset                    |
+| assetholder0             |
+| assetholder2000          |
+| assetholder2007          |
+| block0                   |
+| block2000                |
+| block2007                |
+...
+| blockunfinalized         |
+| chain                    |
++--------------------------+
+```
 
 Key tables:
 * `chain` - stores N records for N chains, with the state of the chain kept in a single record in the `chain` table
@@ -36,97 +81,53 @@ Key tables:
 * `xcmmessages` - stores key info about XCMmmessages 
 * `xcmtransfers` - stores XCM transfers + remote executions
 
+This project is entirely in node.js so there is no tower of classes, React Components to figure out.  We hope that this makes it easy to figure out how things work and twe
+ak things so you can make your chain interoperate with others better and faster.
+
+## XCM Support
+
+You will see XCM Messages + transfers added to these tables
+
 ```
-mysql> select * from chain where chainID = 0 \G
-*************************** 1. row ***************************
-                     chainID: 0
-                          id: polkadot
-                      prefix: 0
-                   chainName: Polkadot
-                  relayChain: polkadot
-                  WSEndpoint: wss://rpc.polkadot.io
-                 WSEndpoint2:
-                 WSEndpoint3: NULL
-...
-               blocksCovered: 11092165
-             blocksFinalized: 11092162
-            lastCleanChainTS: NULL
-               blocksCleaned: 9729723
-                 displayName: Polkadot Relay Chain
-             standardAccount: *25519
-                    decimals: [10]
-                     symbols: ["DOT"]
-                     website: https://polkadot.network
-                 coingeckoID: polkadot
+xcmmessages              
+xcmtransfer              
+xcmtransferdestcandidate 
 ```
 
-The end setup for mysql:
+## EVM Support
+
+If you are dealing with an EVM chain, you may wish to bring in your own ABIs, which leads to better decoded results.
+
 ```
-mysql> show tables;
-+--------------------------+
-| Tables_in_defi           |
-+--------------------------+
-| account                  |
-| address                  |
-| addressTopN              |
-| apikey                   |
-| asset                    |
-| assetInit                |
-| assetholder0             |
-| assetholder2000          |
-| assetholder2007          |
-| block0                   |
-| block2000                |
-| block2007                |
-...
-| blocklog                 |
-| blockunfinalized         |
-| bqlog                    |
-| chain                    |
-| chainEndpoint            |
-| chainPalletStorage       |
-| chainhostnameendpoint    |
-| xcmlog                   |
-| xcmmap                   |
-| xcmmessages              |
-| xcmmessagesrecent        |
-| xcmtransfer              |
-| xcmtransferdestcandidate |
-+--------------------------+
+contractabi
 ```
 
-Block numbers are keyed by 8 digit hex (instead of decimal) to support prefix scans by the indexer.
+## WASM Support
 
-* The `subscribeStorage` events result in a call to fetch the block and turn it _manually_ into sidecar compatible form, resulting in cells in both the `block` and `trace` column family with a call to `processBlock` and `processTrace`.
-* The `subscribeFinalizedHeads` events result in cells in only the `finalized` column family.  Multiple block candidates at a given height result in multiple columns, but when a block is finalized, other non-finalized candidates are deleted.
+Polkadot is heavily invested in making WASM a key component of substrate.  If you are dealing with a WASM ctain, you will see these indexed in the following tables:
 
-Here is the crawlBlocks process on chain 8 (karura), run _manually_ on one node:
 ```
-# root@moonriver:~/go/src/github.com/colorfulnotion/polkaholic/substrate# ./crawlBlocks 2000
-chain API connected 2000
-2022-07-09 11:42:51        API/INIT: RPC methods not decorated: evm_blockLimits
-You are connected to ACALA chain 2000 endpoint=... with types + rpc + signedExt
-...
-subscribeStorage Acala bn=1396814 0x0d5aaa4b68bce292eafe392b52870a13d0e3f416beb86b69b6d6c90185049c03: cbt read chain2000 prefix=0x0015504e
-subscribeFinalizedHeads Acala 1396812 CHECK: cbt read chain2000 prefix=0x0015504c |   update chain set blocksFinalized = '1396812', lastFinalizedDT = Now() where chainID = '2000'
-...
+contract
+contractCode
 ```
 
-Here is a single block for chain 0, 2000, 2007:
-```
-The above log shows how to inspect with `cbt` on the command line.
-In most cases there will be multiple cells for `finalized` due to multiple indexers, but any row with a `finalized` cell should have only one block/trace matching column.
+# Shutdown
 
-The tip of each crawled chain is held in the `chain` table in the `blocksCovered` column.
+After shutting down ZombieNet, you can shut down your mysql instance with:
 ```
-mysql> select chainID, chainName, lastCrawlDT, blocksCovered from chain where crawling = 1;
-+---------+---------------------+---------------------+---------------+
-| chainID | chainName           | lastCrawlDT         | blocksCovered |
-+---------+---------------------+---------------------+---------------+
-|       0 | Polkadot            | 2022-07-09 18:55:00 |      11092883 |
-...
+# docker-compose down
 ```
 
+# Differences between ZombieNet Explorer with Polkaholic.io
+
+ZombieNet is about ephemeral networks that will live for a few hours
+or a few days at most, whereas Polkaholic.io attempts to index
+multiple years from block 1.
+
+The backend of just using mysql for ZombieNet Explorer is sufficient,
+whereas with Polkaholic.io uses a lot of BigTable / BigQuery
+components in addition, with a lot of additional jobs to fetch missing
+data, aggregate data.  Many views have been suppressed.
 
 ## Contributing
 

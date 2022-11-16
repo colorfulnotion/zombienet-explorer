@@ -20,9 +20,6 @@ const ethTool = require("./ethTool");
 const mysql = require("mysql2");
 const uiTool = require('./uiTool')
 const assetAndPriceFeedTTL = 300; // how long the data stays cached
-const {
-    BigQuery
-} = require('@google-cloud/bigquery');
 
 module.exports = class Query extends AssetManager {
     debugLevel = paraTool.debugNoLog;
@@ -534,66 +531,6 @@ module.exports = class Query extends AssetManager {
             minuteLimit: this.getPlanRateLimit(3)
         }];
     }
-
-    async createAPIKey(email, planID = 0) {
-        let apikey = this.create_api_key(email)
-        var sql = `insert into apikey (email, apikey, createDT) values (${mysql.escape(email)}, ${mysql.escape(apikey)}, Now())`;
-        try {
-            // update bigtable
-            let ratelimit = this.getPlanRateLimit(planID);
-            console.log(apikey, planID, ratelimit);
-            let nrec = {};
-            nrec["ratelimit"] = {
-                value: JSON.stringify(ratelimit),
-                timestamp: new Date()
-            };
-            let rowsToInsert = [{
-                key: apikey,
-                data: {
-                    n: nrec
-                }
-            }];
-            this.batchedSQL.push(sql);
-            await this.update_batchedSQL();
-            await this.btAPIKeys.insert(rowsToInsert);
-            return ({
-                success: true,
-                apikey: apikey
-            })
-        } catch (err) {
-            this.logger.error({
-                "op": "query.createAPIKey",
-                email,
-                sql,
-                err
-            });
-            return ({
-                error: "Could not create API Key"
-            });
-        }
-    }
-
-    async deleteAPIKey(email, apikey) {
-        var sql = `update apikey set deleted = 1, deleteDT = Now() where email = ${mysql.escape(email)} and apikey = ${mysql.escape(apikey)}`;
-        try {
-            this.batchedSQL.push(sql);
-            await this.update_batchedSQL();
-            return ({
-                success: true
-            })
-        } catch (e) {
-            this.logger.error({
-                "op": "query.deleteAPIKey",
-                email,
-                sql,
-                err
-            });
-            return ({
-                error: "Could not delete API Key"
-            });
-        }
-    }
-
     async search_address(addr) {
         let res = [];
         try {
@@ -2373,9 +2310,7 @@ module.exports = class Query extends AssetManager {
             throw new paraTool.InvalidError(`Invalid blockNumber: ${blockNumber} (tip: ${chain.blocksCovered})`)
         }
         try {
-            let families = ["feed", "finalized", "feedevm"];
-            let row = await this.fetch_block(chainID, blockNumber, families, true, blockHash);
-            // TODO: check response
+            let row = await this.fetch_block(chainID, blockNumber, [], true, blockHash);
             let block = row.feed;
             if (block) {
                 block = await this.decorateBlock(row.feed, chainID, row.evmFullBlock, decorate, decorateExtra);
@@ -3104,6 +3039,7 @@ module.exports = class Query extends AssetManager {
             if (x) addresses.push(x);
         }
         let accounts = [];
+	return accounts;
         if (addresses.length == 0) return (accounts);
         try {
             let [tblName, tblRealtime] = this.get_btTableRealtime()

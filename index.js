@@ -39,23 +39,12 @@ app.locals.query = query;
 app.locals.config = prodConfig;
 
 // For local web/API development, add this to your ~/.bashrc:
-// export NODE_ENV=development
-// export POLKAHOLIC_API_URL=http://localhost:3001
-if (process.env.POLKAHOLIC_API_URL != undefined) {
-    app.locals.config.baseURL = process.env.POLKAHOLIC_API_URL;
-}
+app.locals.config.baseURL = "http://kusama-internal.polkaholic.io:3001";
 
-let isDevelopment = (process.env.NODE_ENV == "development") ? true : false
 
-if (isDevelopment) {
-    app.use(express.static('public', {
-        maxAge: '5s'
-    }))
-} else {
-    app.use(express.static('public', {
-        maxAge: '120m'
-    }))
-}
+app.use(express.static('public', {
+    maxAge: '5s'
+}))
 app.use(fileUpload());
 app.use(cookieParser());
 app.set('view engine', 'ejs');
@@ -63,24 +52,10 @@ app.use(express.urlencoded({
     extended: true
 }))
 
-// ready db config for sessionStore
-const mysqlStore = require('express-mysql-session')(session);
 try {
-    let dbconfigFilename = (process.env.POLKAHOLIC_DB != undefined) ? process.env.POLKAHOLIC_DB : '/root/.mysql/.db00.cnf';
-    let dbconfig = ini.parseSync(dbconfigFilename);
-    let c = dbconfig.client;
-    const sessionStore = new mysqlStore({
-        connectionLimit: 10,
-        user: c.user,
-        database: c.database,
-        password: c.password,
-        host: c.host,
-        createDatabaseTable: true
-    });
     app.use(session({
         secret: 'polkaholic colorful notion',
         resave: false,
-        store: sessionStore,
         cookie: {
             maxAge: 1000 * 3600 * 4
         },
@@ -90,8 +65,6 @@ try {
     console.log(err);
 }
 
-
-
 app.use(function(req, res, next) {
     res.locals.req = req;
     res.locals.res = res;
@@ -99,33 +72,6 @@ app.use(function(req, res, next) {
 })
 
 function map_host_chain(hostname) {
-    let sa = hostname.split(".");
-    if (sa.length >= 2) {
-        let domain = sa[sa.length - 2];
-        let defaultid = null;
-        let subdomains = [];
-        switch (domain) {
-            case "astarscan":
-                defaultid = "astar"
-                subdomains = ["shiden", "shibuya"];
-                break;
-            case "acalascan":
-                defaultid = "acala"
-                subdomains = ["karura", "mandala"]
-                break;
-            case "xcmscan":
-                defaultid = "moonbeam";
-                subdomains = ["moonriver", "moonbase"]
-                break;
-        }
-        if (defaultid) {
-            let subdomain = (sa.length > 2) ? sa[sa.length - 3].toLowerCase() : null;
-            let [chainID, id] = query.convertChainID(subdomain && ((subdomains.length > 0 && subdomains.includes(subdomain)) || domain == "xcmscan") ? subdomain : defaultid);
-            if (id) {
-                return [chainID, id];
-            }
-        }
-    }
     return [null, null];
 }
 
@@ -237,58 +183,6 @@ function decorateOptUI(req, ctx = null) {
     return [decorate, decorateExtra]
 }
 
-function getLoginEmail(req) {
-    if (!req.session.email) return (false);
-    if (uiTool.validEmail(req.session.email)) {
-        return (req.session.email);
-    }
-    return (false);
-}
-
-// Usage: https://polkaholic.io/login
-app.get('/login', async (req, res) => {
-    try {
-        var chains = await query.getChains();
-        res.render('login', {
-            commit: query.commitHash,
-            version: query.indexerInfo,
-            chains: chains,
-            chainInfo: query.getChainInfo(),
-            skipSearch: true,
-            error: ""
-        });
-    } catch (err) {
-        return res.status(400).json({
-            error: err.toString()
-        });
-    }
-})
-
-// Usage: https://polkaholic.io/login
-app.post('/login/', async (req, res) => {
-    try {
-        let email = req.body.email.trim();
-        let password1 = req.body.pw1;
-        var chains = await query.getChains();
-        let result = await query.validateUser(email, password1)
-        if (result.success) {
-            req.session.email = email;
-            res.redirect("/apikeys");
-        } else if (result.error) {
-            res.render('login', {
-                chains: chains,
-                chainInfo: query.getChainInfo(),
-                error: result.error
-            });
-        }
-    } catch (err) {
-        return res.status(400).json({
-            error: err.toString()
-        });
-    }
-})
-
-// Usage: https://polkaholic.io/verify
 app.post('/verify/', async (req, res) => {
     try {
         let chains = await query.getChains();
@@ -320,26 +214,6 @@ app.post('/verify/', async (req, res) => {
     }
 })
 
-
-// Usage: https://polkaholic.io/verify
-/*
-app.get('/verify/', async (req, res) => {
-    try {
-        let verify = {};
-        let obj = {};
-        res.render('verify', {
-	    verify,
-	    obj,
-            chainInfo: query.getChainInfo()
-        });
-    } catch (err) {
-	console.log("verify GET ERR", err);
-        return res.status(400).json({
-            error: err.toString()
-        });
-    }
-})
-*/
 
 app.get('/logout', async (req, res) => {
     req.session.destroy();
@@ -383,118 +257,7 @@ app.get('/apikeys/delete/:apikey', async (req, res) => {
     }
 })
 
-app.get('/apikeys/changeplan/:apikey', async (req, res) => {
-    const loggedInEmail = getLoginEmail(req);
-    if (loggedInEmail) {
-        var apikey = req.params['apikey']
-        var plan = await query.getAPIKeyPlan(loggedInEmail, apikey)
-        var plans = await query.getAPIKeyPlans();
-        res.render('changeplan', {
-            plan: plan,
-            plans: plans,
-            apikey: apikey
-        });
-    } else {
-        res.redirect("/login");
-    }
-})
 
-app.get('/apikeys/changeplan/:apikey/:planID', async (req, res) => {
-    const loggedInEmail = getLoginEmail(req);
-    if (loggedInEmail) {
-        var apikey = req.params['apikey']
-        var planID = req.params['planID']
-        var result = await query.updateAPIKeyPlan(loggedInEmail, apikey, planID)
-        res.redirect('/apikeys');
-    } else {
-        res.redirect("/login");
-    }
-})
-
-
-app.get('/register', async (req, res) => {
-    res.render('register', {
-        chainInfo: query.getChainInfo(),
-        skipSearch: true,
-        error: ""
-    });
-})
-
-app.get('/forgot', async (req, res) => {
-    res.render('forgot', {
-        chainInfo: query.getChainInfo(),
-        skipSearch: true,
-        info: ""
-    });
-})
-
-app.post('/forgot', async (req, res) => {
-    let email = req.body.email;
-    if (query.sendResetPasswordLink(email)) {
-        res.render('forgot', {
-            chainInfo: query.getChainInfo(),
-            skipSearch: true,
-            info: email
-        });
-    } else {
-        res.redirect("/forgot");
-    }
-})
-
-app.get('/resetpassword/:email/:ts/:sig', async (req, res) => {
-    let email = req.params.email;
-    let ts = req.params.ts;
-    let sig = req.params.sig;
-
-    res.render('resetpassword', {
-        chainInfo: query.getChainInfo(),
-        skipSearch: true,
-        email: email,
-        ts: ts,
-        sig: sig
-    });
-})
-
-app.post('/resetpassword/:email/:ts/:sig', async (req, res) => {
-    let email = req.params.email;
-    let ts = req.params.ts;
-    let sig = req.params.sig;
-    let pwd = req.body.pw1;
-    let result = await query.resetPassword(email, pwd, ts, sig);
-
-    if (result.success) {
-        req.session.email = email;
-        res.redirect("/apikeys");
-    } else {
-        res.redirect("/login");
-    }
-})
-
-
-app.post('/register', async (req, res) => {
-    let email = req.body.email;
-    let password1 = req.body.pw1;
-    if (uiTool.validEmail(email)) {
-        var result = await query.registerUser(email, password1)
-        if (result.success) {
-            res.redirect("/apikeys");
-        } else if (result.error) {
-            res.render('register', {
-                chainInfo: query.getChainInfo(),
-                error: result.error,
-                skipSearch: true
-            });
-
-        }
-    } else {
-        return res.status(400).json({
-            error: "Invalid email"
-        });
-    }
-})
-
-
-const downtime = false;
 
 app.get('/', async (req, res) => {
 
@@ -525,26 +288,6 @@ app.get('/', async (req, res) => {
         });
     }
 })
-
-app.get('/addresstopn', async (req, res) => {
-    try {
-        var chains = await query.getChains();
-        let topNfilters = query.getAddressTopNFilters();
-        res.render('addresstopn', {
-            chains: chains,
-            chainInfo: query.getChainInfo(),
-            topNfilters: topNfilters,
-            topN: "balanceUSD",
-            apiUrl: '/addresstopn',
-            docsSection: "get-all-chains"
-        });
-    } catch (err) {
-        return res.status(400).json({
-            error: err.toString()
-        });
-    }
-})
-
 
 function getConsent(req) {
     if (req.cookies && req.cookies.consent) {
@@ -623,7 +366,6 @@ app.get('/identicon/:address', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/chaininfo
 app.get('/chaininfo/:chainIDorChainName?', async (req, res) => {
     try {
         let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
@@ -655,39 +397,7 @@ app.get('/chaininfo/:chainIDorChainName?', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/chainlog
-app.get('/chainlog/:chainIDorChainName?', async (req, res) => {
-    try {
-        let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
-        let [chainID, id, chain] = await getHostChain(req, chainIDorChainName)
-        if (chain) {
-            res.render('chainlog', {
-                chainID: chainID,
-                id: id,
-                chainInfo: query.getChainInfo(chainID),
-                chain: chain,
-                apiUrl: req.path,
-                docsSection: "get-chain-info"
-            });
-        } else {
-            res.redirect(`/`);
-        }
-    } catch (err) {
-        if (err instanceof paraTool.NotFoundError) {
-            res.render('notfound', {
-                recordtype: "chain",
-                chainInfo: query.getChainInfo()
-            });
-        } else {
-            res.render('error', {
-                chainInfo: query.getChainInfo(),
-                err: err
-            });
-        }
-    }
-})
 
-// Usage: https://polkaholic.io/channels
 app.get('/channels', async (req, res) => {
     try {
         let [chainID, id, chain] = await getHostChain(req)
@@ -719,39 +429,6 @@ app.get('/channels', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/projects
-app.get('/projects', async (req, res) => {
-    try {
-        let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
-        let [chainID, id, chain] = await getHostChain(req, chainIDorChainName)
-        if (chain) {
-            res.render('projects', {
-                chainID: chainID,
-                id: id,
-                chainInfo: query.getChainInfo(chainID),
-                chain: chain,
-                apiUrl: req.path,
-                docsSection: "get-channels"
-            });
-        } else {
-            res.redirect(`/`);
-        }
-    } catch (err) {
-        if (err instanceof paraTool.NotFoundError) {
-            res.render('notfound', {
-                recordtype: "chain",
-                chainInfo: query.getChainInfo()
-            });
-        } else {
-            res.render('error', {
-                chainInfo: query.getChainInfo(),
-                err: err
-            });
-        }
-    }
-})
-
-// Usage: https://polkaholic.io/wasmcodes
 app.get('/wasmcodes/:chainIDorChainName?', async (req, res) => {
     try {
         let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
@@ -783,7 +460,6 @@ app.get('/wasmcodes/:chainIDorChainName?', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/wasmcontracts
 app.get('/wasmcontracts/:chainIDorChainName?', async (req, res) => {
     try {
         let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
@@ -815,8 +491,6 @@ app.get('/wasmcontracts/:chainIDorChainName?', async (req, res) => {
     }
 })
 
-
-// Usage: https://polkaholic.io/specversions
 app.get('/specversions/:chainIDorChainName?', async (req, res) => {
     try {
         let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
@@ -848,7 +522,6 @@ app.get('/specversions/:chainIDorChainName?', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/blocks/22000
 app.get('/blocks/:chainIDorChainName?', async (req, res) => {
     try {
         let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
@@ -879,86 +552,7 @@ app.get('/blocks/:chainIDorChainName?', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/chain/22000
-app.get('/pools/:chainIDorChainName?', async (req, res) => {
-    let accounts = [];
-    let addresses = getHomeAddresses(req);
-    try {
-        if (addresses) {
-            accounts = await query.getMultiAccount(addresses);
-        }
-    } catch (e) {
-        // errors should not matter here
-    }
-    try {
-        let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
-        let [chainID, id, chain] = await getHostChain(req, chainIDorChainName)
-        if (chain) {
-            res.render('pools', {
-                chainID: chainID,
-                addresses: addresses,
-                accounts: accounts,
-                id: id,
-                chainInfo: query.getChainInfo(chainID),
-                chain: chain,
-                apiUrl: req.path,
-                docsSection: "get-pools"
-            });
-        } else {
-            res.redirect(`/`);
-        }
-    } catch (err) {
-        if (err instanceof paraTool.NotFoundError) {
-            res.render('notfound', {
-                recordtype: "chain",
-                chainInfo: query.getChainInfo()
-            });
-        } else {
-            res.render('error', {
-                chainInfo: query.getChainInfo(),
-                err: err
-            });
-        }
-    }
-})
 
-app.get('/chart/:asset?', async (req, res) => {
-    try {
-        let asset = (req.params.asset) ? req.params.asset : '[{"Token":"KUSD"},{"Token":"KSM"}]#8';
-        let data = await query.getAssetPairOHLCV(asset);
-        res.render('ohlcv', {
-            data: data
-        });
-    } catch (err) {
-        return res.status(400).json({
-            error: err.toString()
-        });
-    }
-})
-
-app.get('/extrinsicdocs/:chainIDorChainName/:p/:m', async (req, res) => {
-    try {
-        let chainID_or_chainName = req.params["chainIDorChainName"]
-        let [chainID, id] = query.convertChainID(chainID_or_chainName)
-        let p = (req.params.p);
-        let m = (req.params.m);
-        p = p.toLowerCase().replace("_", "").trim()
-        m = m.toLowerCase().replace("_", "").trim()
-        let doc = await query.getExtrinsicDocs(chainID, p, m);
-        if (doc) {
-            res.write(JSON.stringify(doc));
-            res.end();
-        } else {
-            res.sendStatus(404);
-        }
-    } catch (err) {
-        return res.status(400).json({
-            error: err.toString()
-        });
-    }
-})
-
-// Usage: https://polkaholic.io/extrinsics/polkadot
 app.get('/extrinsics/:chainID_or_chainName/:s?/:m?', async (req, res) => {
     let chainID_or_chainName = req.params["chainID_or_chainName"]
     try {
@@ -1070,7 +664,7 @@ app.get('/transfers/:chainID_or_chainName/:s?/:m?', async (req, res) => {
         }
     }
 })
-// Usage: https://polkaholic.io/evmtxs/moonbeam
+
 app.get('/evmtxs/:chainID_or_chainName/:s?/:m?', async (req, res) => {
     let chainID_or_chainName = req.params["chainID_or_chainName"]
     try {
@@ -1133,7 +727,6 @@ app.get('/assets/:assetType?', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/xcmassets
 app.get('/xcmassets/:chainIDorChainName?', async (req, res) => {
     try {
         let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
@@ -1175,7 +768,6 @@ app.get('/xcmassets/:chainIDorChainName?', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/xcmtransfers
 app.get('/xcmtransfers/:chainIDorChainName?', async (req, res) => {
     try {
         let chainIDorChainName = req.params.chainIDorChainName ? req.params.chainIDorChainName : null;
@@ -1225,7 +817,6 @@ app.get('/xcmtransfers/:chainIDorChainName?', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/xcmmessages
 app.get('/xcmmessages/:chainIDorChainName?', async (req, res) => {
     try {
 
@@ -1318,9 +909,6 @@ app.get('/remoteexecution/:address?', async (req, res) => {
     }
 })
 
-
-
-// Usage: https://polkaholic.io/extrinsics/10
 app.get('/specversion/:chainID_or_chainName/:specVersion', async (req, res) => {
     let chainID_or_chainName = req.params["chainID_or_chainName"]
     try {
@@ -1391,7 +979,6 @@ app.get('/trace/:chainID_or_chainName/:blockNumber/:blockHash?', async (req, res
     }
 })
 
-// Usage: https://polkaholic.io/block/karura/1000000?blockhash=xxx&decorate=true&extra=address,usd
 app.get('/block/:chainID_or_chainName/:blockNumber', async (req, res) => {
     let chainID_or_chainName = req.params["chainID_or_chainName"]
     try {
@@ -1430,7 +1017,6 @@ app.get('/block/:chainID_or_chainName/:blockNumber', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/block/karura/1000000?blockhash=xxx&decorate=true&extra=address,usd
 app.get('/txs/:chainID_or_chainName/:blockNumber', async (req, res) => {
     let chainID_or_chainName = req.params["chainID_or_chainName"]
     try {
@@ -1469,7 +1055,6 @@ app.get('/txs/:chainID_or_chainName/:blockNumber', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/blockhash/0x2d893816b0d7c1ab476dc64c8febe98f4b78db16af809dab302386e6c919f017
 app.get('/blockhash/:blockhash', async (req, res) => {
     try {
         let blockHash = (req.params["blockhash"])
@@ -1503,7 +1088,6 @@ app.get('/blockhash/:blockhash', async (req, res) => {
     }
 })
 
-// Usage: https://polkaholic.io/blockhash/0x2d893816b0d7c1ab476dc64c8febe98f4b78db16af809dab302386e6c919f017
 app.get('/blockhash/:blockhash', async (req, res) => {
     try {
         let blockHash = (req.params["blockhash"])
@@ -2179,25 +1763,12 @@ app.use(function(err, req, res, next) {
 })
 
 const hostname = "::";
-// MK: preemptive listening when in dev
-if (isDevelopment) {
-    app.listen(port, hostname, () => {
-        let uiHostName = `${query.hostname}.polkaholic.io`
-        console.log(`Polkaholic listening on ${uiHostName}:${port} API URL: ${app.locals.config.baseURL} preemptively`);
-    })
-}
-// delayed listening of your app
-// reload chains/assets/specVersions regularly
-let x = query.init(); // lower in dev, higher in production
-console.log(`[${new Date().toLocaleString()}] Initiating query`)
+let x = query.init(); 
 Promise.all([x]).then(() => {
-    console.log(`[${new Date().toLocaleString()}] query ready`)
-    if (!isDevelopment) {
-        app.listen(port, hostname, () => {
-            let uiHostName = `${query.hostname}.polkaholic.io`
-            console.log(`Polkaholic listening on ${uiHostName}:${port} API URL:`, app.locals.config.baseURL);
-        })
-    }
+    app.listen(port, hostname, () => {
+        let uiHostName = `localhost`
+        console.log(`ZombieNet Explorer listening on ${uiHostName}:${port} API URL:`, app.locals.config.baseURL);
+    })
     query.autoUpdate()
 }).catch(err => {
     // handle error here

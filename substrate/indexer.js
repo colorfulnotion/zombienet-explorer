@@ -4,7 +4,7 @@ const path = require("path");
 const AssetManager = require("./assetManager");
 const ethTool = require("./ethTool");
 const paraTool = require("./paraTool");
-const Endpoints = require("./summary/endpoints");
+
 const mysql = require("mysql2");
 const {
     WebSocket
@@ -41,6 +41,9 @@ module.exports = class Indexer extends AssetManager {
     extrinsicEvmMap = {};
 
     currentPeriodKey = false;
+
+    initTS = false;
+    crawlTS = false;
 
     numUpdated = 0
     tallyAsset = {};
@@ -231,6 +234,10 @@ module.exports = class Indexer extends AssetManager {
         this.logger.warn(obj);
     }
 
+    resetErrorWarnings(){
+        this.numIndexingErrors = 0
+        this.numIndexingWarns = 0
+    }
     setParentRelayAndManager(relayCrawler, manager) {
         if (this.debugLevel >= paraTool.debugTracing) console.log(`[${this.chainID}:${this.chainName}] setParentRelayAndManager`)
         this.parentRelayCrawler = relayCrawler
@@ -551,8 +558,8 @@ module.exports = class Indexer extends AssetManager {
         //  where each cell will be specific time and it is in reverse chronilogical order
         return (true);
     }
-    // getSpecVersionMetadata returns a cached metadata object OR fetches from SQL table OR does a RPC call
-    // and updates this.storageKeys using the "pallets"
+    
+    // getSpecVersionMetadata returns a cached metadata object OR fetches from SQL table OR does a RPC call and updates this.storageKeys using the "pallets"
     async getSpecVersionMetadata(chain, specVersion, blockHash = false, bn = 0) {
         let chainID = chain.chainID;
         let updateChainPalletStorage = (this.getCurrentTS() - chain.lastUpdateStorageKeysTS > 86400 * 3);
@@ -603,13 +610,6 @@ module.exports = class Indexer extends AssetManager {
             var prefix = pallet.prefix;
             if (storage && storage.items) {
                 for (const item of storage.items) {
-                    /* Example: {
-                      name: 'TotalIssuance',
-                      modifier: 'Default',
-                      type: { map: { hashers: [Array], key: '44', value: '6' } },
-                      fallback: '0x00000000000000000000000000000000',
-                      docs: [ ' The total issuance of a token type.' ]
-                      }		*/
                     let type0 = JSON.stringify(item.type);
                     let modifier = item.modifier;
                     let fallback = item.fallback;
@@ -736,7 +736,7 @@ module.exports = class Indexer extends AssetManager {
 
         let addressStorageStartTS = new Date().getTime();
         try {
-            await Promise.all([this.flush_historyMap(), this.flush_addressStorage(), this.flushCrowdloans()]);
+            await Promise.all([this.flush_addressStorage(), this.flushCrowdloans()]);
         } catch (err) {
             this.log_indexing_error(err, "flush");
         }
@@ -1017,7 +1017,9 @@ module.exports = class Indexer extends AssetManager {
     }
 
     async insertBTRows(tbl, rows, tableName = "") {
-        if (rows.length == 0) return (true);
+	//console.log("insertBTRows", tbl);
+	return;
+/*        if (rows.length == 0) return (true);
         try {
             await tbl.insert(rows);
             return (true);
@@ -1047,7 +1049,7 @@ module.exports = class Indexer extends AssetManager {
                 }
             }
             return (succ);
-        }
+        } */
     }
 
     // write this.addressExtrinsicMap [filled in updateAddressExtrinsicStorage] to btAddressExtrinsic
@@ -1388,6 +1390,30 @@ module.exports = class Indexer extends AssetManager {
         this.xcmmsgSentAtUnknownMap = {}
     }
 
+    sendManagerStat(numIndexingErrors, numIndexingWarns, elapsedSeconds){
+        //if (this.debugLevel >= paraTool.debugTracing) console.log(`sendManagerStat numIndexingErrors=${numIndexingErrors}, numIndexingWarns=${numIndexingWarns}, elapsedSeconds=${elapsedSeconds}`)
+        if (!this.parentManager) return
+        if (numIndexingErrors >= 0 && numIndexingWarns >= 0){
+            let m = {
+                blockHash: this.chainParser.parserBlockHash,
+                blockTS: this.chainParser.parserTS,
+                blockBN: this.chainParser.parserBlockNumber,
+                numIndexingErrors: numIndexingErrors,
+                numIndexingWarns: numIndexingWarns,
+                elapsedTS: elapsedSeconds,
+            }
+            let wrapper = {
+                type: "stat",
+                msg: m,
+                chainID: this.chainID,
+                source: this.hostname,
+                commit: this.indexerInfo,
+            }
+            if (this.debugLevel >= paraTool.debugTracing) console.log(`[${this.chainID}:${this.chainName}] sendManagerStat`, wrapper)
+            this.parentManager.sendManagerStat(this.chainID, wrapper)
+        }
+    }
+
     sendManagerMessage(m, msgType = null, finalized = false) {
         if (!this.parentManager) {
             //if (this.debugLevel >= paraTool.debugVerbose) console.log(`[${this.chainID}:${this.chainName}] parentManager not set`)
@@ -1407,8 +1433,8 @@ module.exports = class Indexer extends AssetManager {
             source: this.hostname,
             commit: this.indexerInfo,
         }
-        if (this.debugLevel >= paraTool.debugInfo) console.log(`[${this.chainID}:${this.chainName}] sendManagerMessage`, wrapper)
-        this.parentManager.sendMsg(this.chainID, wrapper)
+        if (this.debugLevel >= paraTool.debugTracing) console.log(`[${this.chainID}:${this.chainName}] sendManagerMessage`, wrapper)
+        this.parentManager.sendManagerMessage(this.chainID, wrapper)
     }
 
     sendWSMessage(m, msgType = null, finalized = false) {
@@ -2869,26 +2895,6 @@ module.exports = class Indexer extends AssetManager {
         return "state_traceBlock"
     }
 
-    async testParseTraces(chainID) {
-        let chain = await this.setupChainAndAPI(chainID);
-        let traces = await this.poolREADONLY.query(`select * from testParseTraces where chainID = '${chainID}' and pass is Null limit 10000`)
-        for (let i = 0; i < traces.length; i++) {
-            let e = traces[i];
-            await this.initApiAtStorageKeys(chain, e.blockHash, e.bn);
-            let traceType = await this.computeTraceType(chain, e.bn);
-            let [autotrace, _] = this.parse_trace_as_auto(e, traceType, traceIdx, e.bn, e.blockHash, chain.api);
-            let [o, parsev] = this.parse_trace_from_auto(autotrace, traceType, e.bn, e.blockHash, chain.api);
-            let sql = false;
-            if (o && parsev) {
-                sql = `update testParseTraces set pass = 1 where chainID = '${e.chainID}' and bn = '${e.bn}' and s = '${e.s}' and k = '${e.k}'`;
-            } else {
-                sql = `update testParseTraces set pass = 0 where chainID = '${e.chainID}' and bn = '${e.bn}' and s = '${e.s}' and k = '${e.k}'`;
-            }
-            console.log(sql);
-            this.batchedSQL.push(sql);
-        }
-        await this.update_batchedSQL();
-    }
 
     // parse trace without any handparse
     parse_trace_as_auto(e, traceType, traceIdx, bn, blockHash, api) {
@@ -3656,7 +3662,7 @@ module.exports = class Indexer extends AssetManager {
             } = apiAt.registry.findMetaCall(paraTool.hexAsU8(callIndex))
             return [method, section]
         } catch (e) {
-            console.log(`getMethodSection unable to decode ${callIndex}`)
+            console.log(`getMethodSection unable to decode ${callIndex}`, e)
         }
         return [null, null]
     }
@@ -3784,9 +3790,8 @@ module.exports = class Indexer extends AssetManager {
             }
         }
 
+	console.log(`[${extrinsicID}] ${extrinsicHash}   |  ${section}:${method}`)
 
-        //console.log(`[${extrinsicID}] ${extrinsicHash}   |  ${section}:${method}`)
-        // console.log("exos", exos)
 
         try {
             // this is picking up utility batch with "calls" array
@@ -4358,7 +4363,6 @@ module.exports = class Indexer extends AssetManager {
         }
 
         try {
-
             // feed is used for {feed, feedTransfer, feedRewards}
             var feed = {};
             feed = rExtrinsic
@@ -4366,13 +4370,6 @@ module.exports = class Indexer extends AssetManager {
             feed["genTS"] = this.currentTS();
             feed["source"] = this.hostname
 
-            /*
-            if (this.validAddress(fromAddress)) {
-                // (4) txn (can be processed immediately)
-                this.stat.addressRows.feed++
-                this.updateAddressExtrinsicStorage(fromAddress, extrinsicID, extrinsicHash, "feed", feed, blockTS, "PENDING");
-            }
-            */
             // (1) hashesRowsToInsert: extrinsicHash -> tx
             let hashrec = {};
             hashrec["tx"] = {
@@ -4386,12 +4383,9 @@ module.exports = class Indexer extends AssetManager {
             }
             extrinsicHashRec.data["feedpending"] = hashrec
             this.hashesRowsToInsert.push(extrinsicHashRec)
-            //console.log(`processed pendingTX ${extrinsicHash} (signer:${signer}, nonce:${nonce})`)
-            //console.log(feed)
         } catch (err) {
             this.log_indexing_error(err, "process_pending_extrinsic")
         }
-
         return (rExtrinsic);
     }
 
@@ -6546,6 +6540,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         // setParserContext
         this.chainParser.setParserContext(block.blockTS, blockNumber, blockHash, chainID);
         if (this.isRelayChain) this.chainParser.setRelayParentStateRoot(stateRoot)
+	this.apiAt = this.api
         let api = this.apiAt; //processBlockEvents is sync func, so we must initialize apiAt before pass in?
         block.finalized = finalized;
 
@@ -6674,7 +6669,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 }
             }
         }
-
         this.hashesRowsToInsert.push(substrateBlockHashRec)
 
         if (this.isRelayChain) {
@@ -6691,49 +6685,9 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 blockHash: blockHash,
                 blockType: 'substrate'
             }
-            if (block.finalized) {
-                substrateStateRootRec.data = {
-                    feed: {
-                        stateroot: {
-                            value: JSON.stringify(blockfeedWithBlkHash),
-                            timestamp: blockTS * 1000000
-                        }
-                    }
-                }
-            } else {
-                substrateStateRootRec.data = {
-                    feedunfinalized: {
-                        stateroot: {
-                            value: JSON.stringify(blockfeedWithBlkHash),
-                            timestamp: blockTS * 1000000
-                        }
-                    }
-                }
-            }
-            this.hashesRowsToInsert.push(substrateStateRootRec)
         }
 
-        // (2) record block in BT chain${chainID} feed
-        let cres = {
-            key: paraTool.blockNumberToHex(blockNumber),
-            data: {
-                feed: {},
-                feedevm: {},
-                autotrace: {},
-            }
-        };
-        cres['data']['feed'][blockHash] = {
-            value: JSON.stringify(block),
-            timestamp: blockTS * 1000000
-        };
-
-        // (2a) record autoTrace in BT chain${chainID} feed, if available
-        if (autoTraces) {
-            cres['data']['autotrace'][blockHash] = {
-                value: JSON.stringify(autoTraces),
-                timestamp: blockTS * 1000000
-            };
-        }
+              
 
         // (3) fuse block+receipt for evmchain, if both evmBlock and evmReceipts are available
         let web3Api = this.web3Api
@@ -6803,7 +6757,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 this.timeStat.processEVMFullBlock++
 
             } else {
-                console.log(`chainID=${chainID} missing web3Api or contractABIs. web3Api(set? ${!web3Api == false}) contractABIs(set? ${!contractABIs == false})`)
+                //console.log(`chainID=${chainID} missing web3Api or contractABIs. web3Api(set? ${!web3Api == false}) contractABIs(set? ${!contractABIs == false})`)
             }
         }
 
@@ -6868,67 +6822,55 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 blockNumber: blockNumber,
                 blockType: 'evm'
             }
-            // add 'feedevm'
-            cres['data']['feedevm'][blockHash] = {
-                value: JSON.stringify(evmFullBlock),
-                timestamp: blockTS * 1000000 // CHECK: should we use evmBlockTS instead?
-            };
-
-            if (write_bqlog) {
-                this.write_bqlog_evmblock(evmFullBlock.transactions, blockNumber, blockTS);
-            }
 
             // add evmblockhash pointer for searchability
             let evmBlockhash = evmFullBlock.hash
             // console.log("processBlockEvents added hashesRowsToInsert", evmBlockhash, this.hashesRowsToInsert.length);
             // (4) hashesRowsToInsert: evmFullBlockHash -> evmBlockBN
             this.stat.hashesRows.evmBlk++
-
-            let evmBlockHashRec = {
-                key: evmBlockhash,
-                data: {}, //feed/feedunfinalized
-            }
-            if (block.finalized) {
-                evmBlockHashRec.data = {
-                    feed: {
-                        block: {
-                            value: JSON.stringify(evmBlockfeed),
-                            timestamp: blockTS * 1000000
-                        }
-                    }
-                }
-            } else {
-                evmBlockHashRec.data = {
-                    feedevmunfinalized: {
-                        block: {
-                            value: JSON.stringify(evmBlockfeed),
-                            timestamp: blockTS * 1000000
-                        }
-                    }
-                }
-            }
-
+	    
             this.hashesRowsToInsert.push(evmBlockHashRec)
-
         }
 
-        if (write_bqlog) {
-            this.write_bqlog_block(block.extrinsics, blockNumber, blockTS);
-        }
+	await this.store_block(chainID, blockNumber, blockHash, finalized,
+			       { block: JSON.stringify(block),
+				 evmBlock: JSON.stringify(evmBlock)} );
+	
         let blockStats = this.getBlockStats(block, eventsRaw, evmBlock, evmReceipts, autoTraces);
 
-        this.blockRowsToInsert.push(cres)
         if (recentExtrinsics.length > 0 || recentTransfers.length > 0 || recentXcmMsgs.length > 0) {
             this.add_recent_activity(recentExtrinsics, recentTransfers, recentXcmMsgs)
         }
-        //let xcmMeta = this.xcmMeta;
-        //this.xcmMeta = []
-        if (xcmMeta.length > 0) {
-            if (this.debugLevel >= paraTool.debugInfo) console.log(`returning [${blockNumber}] [${blockHash}] xcmMeta!`, xcmMeta)
-        }
+
         return [blockStats, xcmMeta];
     }
 
+    async store_block(chainID, bn, blockHash, finalized, data) {
+	let block = data.block;
+	let evmBlock = data.evmBlock;
+	if ( finalized ) {
+	    let vals = ["blockHash", "feed"];
+	    let out = `('${bn}', '${blockHash}', ${mysql.escape(JSON.stringify(block))} )`
+	    await this.upsertSQL({
+		"table": `block${chainID}`,
+		"keys": ["blockNumber"],
+		"vals": vals,
+		"data": [out],
+		"replace": vals
+            });
+	} else {
+	    let vals = ["feed"];
+	    let out = `('${chainID}', '${bn}', '${blockHash}', ${mysql.escape(JSON.stringify(block))} )`
+	    await this.upsertSQL({
+		"table": "blockunfinalized",
+		"keys": ["chainID", "blockNumber", "blockHash"],
+		"vals": vals,
+		"data": [out],
+		"replace": vals
+            });
+	}
+
+    }
     add_recent_activity(recentExtrinsics, recentTransfers, recentXcmMsgs) {
         for (const r of recentExtrinsics) {
             this.recentExtrinsics.push(r);
@@ -7460,8 +7402,8 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         if (isTip == false) return;
         let assetRegistryMetaChain = [paraTool.chainIDKarura, paraTool.chainIDAcala, paraTool.chainIDBifrostKSM, paraTool.chainIDBifrostDOT]
         let assetMetaChain = [paraTool.chainIDAstar, paraTool.chainIDShiden, paraTool.chainIDMoonbeam, paraTool.chainIDMoonriver, paraTool.chainIDHeiko, paraTool.chainIDParallel]
-        if (this.chainID == paraTool.chainIDKarura || this.chainID == paraTool.chainIDAcala ||
-            this.chainID == paraTool.chainIDBifrostKSM || this.chainID == paraTool.chainIDBifrostDOT) {
+        if ( false && ( this.chainID == paraTool.chainIDKarura || this.chainID == paraTool.chainIDAcala ||
+			this.chainID == paraTool.chainIDBifrostKSM || this.chainID == paraTool.chainIDBifrostDOT ) ) {
             //TODO: chainIDBifrostDOT does not support assetRegistry yet
             if (this.chainID == paraTool.chainIDKarura || this.chainID == paraTool.chainIDAcala) {
                 console.log(`Fetch assetRegistry:assetMetadatas`)
@@ -7476,7 +7418,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 console.log(`Fetch assetRegistry:currencyIdToLocations`)
                 await this.chainParser.fetchXCMAssetRegistryLocations(this)
             }
-        } else if (this.chainID == paraTool.chainIDAstar || this.chainID == paraTool.chainIDShiden || this.chainID == paraTool.chainIDShibuya ||
+        } else if (false && ( this.chainID == paraTool.chainIDAstar || this.chainID == paraTool.chainIDShiden || this.chainID == paraTool.chainIDShibuya ||
             this.chainID == paraTool.chainIDMoonbeam || this.chainID == paraTool.chainIDMoonriver || this.chainID == paraTool.chainIDMoonbaseAlpha || this.chainID == paraTool.chainIDMoonbaseBeta ||
             this.chainID == paraTool.chainIDHeiko || this.chainID == paraTool.chainIDParallel ||
             this.chainID == paraTool.chainIDStatemine || this.chainID == paraTool.chainIDStatemint ||
@@ -7486,7 +7428,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             this.chainID == paraTool.chainIDRobonomics ||
             this.chainID == paraTool.chainIDMangataX ||
             this.chainID == paraTool.chainIDListen ||
-            this.chainID == paraTool.chainIDCrustShadow) {
+			      this.chainID == paraTool.chainIDCrustShadow) ) {
             await this.chainParser.fetchAsset(this)
             if (this.chainID == paraTool.chainIDHeiko || this.chainID == paraTool.chainIDParallel) {
                 await this.chainParser.fetchAsset(this)
@@ -7506,7 +7448,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 console.log(`fetch xcAssetConfig:assetIdToLocation (assetRegistry:assetIdToLocation)`)
                 await this.chainParser.fetchXCMAssetIdToLocation(this)
             }
-        } else if (this.chainID == paraTool.chainIDKico) {
+        } else if (false && this.chainID == paraTool.chainIDKico) {
             console.log(`fetch asset:fetchCurrenciesDicoAssetInfos`)
             await this.chainParser.fetchCurrenciesDicoAssetInfos(this)
         }
@@ -7516,6 +7458,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         await this.chainParser.getSystemProperties(this, chain);
     }
 
+    
     // given a row r fetched with "fetch_block_row", processes the block, events + trace
     async index_chain_block_row(r, signedBlock = false, write_bq_log = false, refreshAPI = false, isTip = false) {
         /* index_chain_block_row shall process trace(if available) + block + events in orders
@@ -7617,7 +7560,13 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
     }
 
     // fetches a SINGLE row r (of block, events + trace) with fetch_block_row and indexes the row with index_chain_block_row
-    async index_block(chain, blockNumber, blockHash) {
+    async index_block(chain, blockNumber, blockHash = null) {
+        this.resetErrorWarnings()
+        let elapsedStartTS = new Date().getTime();
+        if (blockHash == undefined){
+            //need to fetch it..
+            blockHash = await this.getBlockHashFinalized(chain.chainID, blockNumber)
+        }
         await this.setup_chainParser(chain, this.debugLevel);
         await this.initApiAtStorageKeys(chain, blockHash, blockNumber);
         this.chainID = chain.chainID;
@@ -7650,7 +7599,16 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 statRows.push(sql);
             }
             this.dump_update_block_stats(chain.chainID, statRows, indexTS)
+            let elapsedTS = (new Date().getTime() - elapsedStartTS) / 1000
             await this.flush(indexTS, blockNumber, false, false); //ts, bn, isFullPeriod, isTip
+
+            // errors, warns within this block ..
+            let numIndexingErrors = this.numIndexingErrors;
+            if (this.chainParser) {
+                numIndexingErrors += this.chainParser.numParserErrors;
+            }
+            let numIndexingWarns = this.numIndexingWarns;
+            this.sendManagerStat(numIndexingErrors, numIndexingWarns, elapsedTS)
             return (r.xcmMeta);
         } catch (err) {
             console.log(err);
@@ -8108,35 +8066,8 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
     }
 
     async initApiAtStorageKeys(chain, blockHash = false, bn = 1) {
-        // this.specVersion holdsesent when we call api.rpc.state.getRuntimeVersion / getSpecVersionMetadata
-        // We use chain.specVersions -- an array of [specVersion, blockNumber] ordered by blockNumber -- of when specVersions change.
-        // We look for the first blocknumber in that array >= bn which is the *expected* specVersion at that bn.
-        // If this specVersion is the same as the last
-        if (chain.specVersions !== undefined && Array.isArray(chain.specVersions) && chain.specVersions.length > 0) {
-            let sv = this.getSpecVersionAtBlockNumber(chain, bn);
-            if ((sv != null) && this.specVersion == sv.specVersion) {
-                return (this.specVersion);
-            }
-            if (sv) {
-                // we have a new specVersion, thus we need new metadata!
-                this.specVersion = sv.specVersion;
-            }
-        }
-        try {
-            this.apiAt = await this.api.at(blockHash)
-            var runtimeVersion = await this.api.rpc.state.getRuntimeVersion(blockHash)
-            this.specVersion = runtimeVersion.toJSON().specVersion;
-
-            await this.getSpecVersionMetadata(chain, this.specVersion, blockHash, bn);
-            if (this.debugLevel >= paraTool.debugInfo) console.log("--- ADJUSTED API AT ", blockHash, this.specVersion)
-        } catch (err) {
-            this.apiAt = await this.api;
-            var runtimeVersion = await this.api.rpc.state.getRuntimeVersion();
-            this.specVersion = runtimeVersion.toJSON().specVersion;
-            await this.getSpecVersionMetadata(chain, this.specVersion, false, bn);
-            if (this.debugLevel >= paraTool.debugInfo) console.log("!!! ADJUSTED API AT ", blockHash, this.specVersion)
-        }
-
+        var runtimeVersion = await this.api.rpc.state.getRuntimeVersion();
+        this.specVersion = runtimeVersion.toJSON().specVersion;
         return this.specVersion
     }
 
@@ -8151,9 +8082,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         let specVersion = false
 
         await this.setup_chainParser(chain, this.debugLevel);
-
-        this.numIndexingErrors = 0;
-        this.numIndexingWarns = 0;
+        this.resetErrorWarnings()
         // NOTE: we do not set this.tallyAsset = {}
 
         this.currentPeriodKey = indexTS;
@@ -8331,14 +8260,17 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             numIndexingErrors += this.chainParser.numParserErrors;
         }
         let indexed = (numIndexingErrors == 0) ? 1 : 0;
+        // mark relaychain period's xcmIndexed = 0 and xcmReadyForIndexing = 1 if indexing is successful and without errors.
+        // this signals that the record is reeady for indexReindexXcm
+        let xcmReadyForIndexing = (this.isRelayChain && indexed)? 1 : 0;
         let numIndexingWarns = this.numIndexingWarns;
         let elapsedSeconds = (new Date().getTime() - indexStartTS) / 1000
         await this.upsertSQL({
             "table": "indexlog",
             "keys": ["chainID", "indexTS"],
-            "vals": ["logDT", "hr", "indexDT", "elapsedSeconds", "indexed", "readyForIndexing", "specVersion", "bqExists", "numIndexingErrors", "numIndexingWarns"],
-            "data": [`('${chainID}', '${indexTS}', '${logDT}', '${hr}', Now(), '${elapsedSeconds}', '${indexed}', 1, '${this.specVersion}', 1, '${numIndexingErrors}', '${numIndexingWarns}')`],
-            "replace": ["logDT", "hr", "indexDT", "elapsedSeconds", "indexed", "readyForIndexing", "specVersion", "bqExists", "numIndexingErrors", "numIndexingWarns"]
+            "vals": ["logDT", "hr", "indexDT", "elapsedSeconds", "indexed", "readyForIndexing", "specVersion", "bqExists", "numIndexingErrors", "numIndexingWarns", "xcmIndexed", "xcmReadyForIndexing"],
+            "data": [`('${chainID}', '${indexTS}', '${logDT}', '${hr}', Now(), '${elapsedSeconds}', '${indexed}', 1, '${this.specVersion}', 1, '${numIndexingErrors}', '${numIndexingWarns}', 0, '${xcmReadyForIndexing}')`],
+            "replace": ["logDT", "hr", "indexDT", "elapsedSeconds", "indexed", "readyForIndexing", "specVersion", "bqExists", "numIndexingErrors", "numIndexingWarns", "xcmIndexed", "xcmReadyForIndexing"]
         });
 
         await this.update_batchedSQL();
@@ -8354,6 +8286,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         this.resetTimeUsage()
         return elapsedSeconds
     }
+
 
 
     resetHashRowStat() {

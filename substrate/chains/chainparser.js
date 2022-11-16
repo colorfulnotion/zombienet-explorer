@@ -162,16 +162,16 @@ module.exports = class ChainParser {
 
     async getSystemProperties(indexer, chain) {
         let chainID = chain.chainID;
-        if (chainID == paraTool.chainIDMoonbaseAlpha || chainID == paraTool.chainIDMoonbaseBeta || chainID == paraTool.chainIDMoonbaseRelay) {
-            //suppress DEV
-            return
-        }
+	
         let propsNative = await indexer.api.rpc.system.properties();
         let props = JSON.parse(propsNative.toString());
         // {"ss58Format":10,"tokenDecimals":[12,12,10,10],"tokenSymbol":["ACA","AUSD","DOT","LDOT"]}
         // NOT MAINTAINED let ss58Format = props.ss58Format;
-        //console.log(propsNative)
+	console.log(propsNative);
+
+	
         if (props.tokenSymbol) {
+	    
             for (let i = 0; i < props.tokenSymbol.length; i++) {
                 let symbol = props.tokenSymbol[i];
                 let decimals = props.tokenDecimals[i];
@@ -3992,6 +3992,7 @@ module.exports = class ChainParser {
     //assetRegistry:foreignAssetLocations
     //assetRegistry:currencyIdToLocations
     async fetchXCMAssetRegistryLocations(indexer) {
+	return;
         let isAcala = true;
         if (!indexer.api) {
             //console.log(`[fetchXCMAssetRegistryLocations] Fatal indexer.api not initiated`)
@@ -4534,6 +4535,7 @@ module.exports = class ChainParser {
             console.log(`[fetchAssetRegistry] Fatal indexer.api not initiated`)
             return
         }
+	return;
         var a;
         let isAcala = true
         switch (indexer.chainID) {
@@ -4548,7 +4550,7 @@ module.exports = class ChainParser {
             default:
                 //console.log(`fetch assetRegistry:assetMetadatas`)
                 a = await indexer.api.query.assetRegistry.assetMetadatas.entries()
-                break;
+                 break;
         }
         if (!a) return
         let assetList = {}

@@ -1,0 +1,60 @@
+# Used to start 4 validator nodes and 2 collator nodes - 1 per parachain
+
+[settings]
+timeout = 1000
+
+[relaychain]
+default_command = "./polkadot"
+default_args = [ "-l=parachain=debug,xcm=trace" ]
+#westend-local?
+chain = "rococo-local"
+
+  [[relaychain.nodes]]
+  name = "alice"
+  validator = true
+
+  [[relaychain.nodes]]
+  name = "bob"
+  validator = true
+
+  [[relaychain.nodes]]
+  name = "charlie"
+  validator = true
+
+  [[relaychain.nodes]]
+  name = "dave"
+  validator = true
+
+[[parachains]]
+id = 2000
+chain = "moonbase-local"
+cumulus_based = true
+
+  [[parachains.collators]]
+  name = "alith"
+  command = "./moonbeam"
+  rpc_port = 8545
+  args = [ "-l=xcm=trace" ]
+  
+[[parachains]]
+id = 2001
+chain = "moonbase-local"
+cumulus_based = true
+
+  [[parachains.collators]]
+  name = "baltathar"
+  command = "./moonbeam"
+  rpc_port = 8545
+  args = [ "-l=xcm=trace" ]
+
+[[hrmp_channels]]
+  sender = 2000
+  recipient = 2001
+  max_capacity = 8
+  max_message_size = 512
+  
+[[hrmp_channels]]
+  sender = 2001
+  recipient = 2000
+  max_capacity = 8
+  max_message_size = 512

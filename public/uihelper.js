@@ -7,6 +7,11 @@ function rendereventdata(data, id = "datascope") {
     document.body.appendChild(script);
 }
 
+
+function presentWSEndpoint(wsEndpoint) {
+    return `<a target="_new" href='https://polkadot.js.org/apps/?rpc=${wsEndpoint}'>${wsEndpoint}</a>`
+}
+
 function fetcheventdata(eventID) {
     let endpoint = `${baseURL}/event/${eventID}`
     console.log(`requesting endpoint:${endpoint}`)

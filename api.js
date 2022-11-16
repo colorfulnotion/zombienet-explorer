@@ -38,9 +38,6 @@ app.use(express.urlencoded({
     extended: true
 }))
 
-let isDevelopment = (process.env.NODE_ENV == "development") ? true : false
-
-const disableAuthorizationCheck = false;
 
 function setCrossOrigin(res) {
     res.set({
@@ -52,29 +49,12 @@ function setCrossOrigin(res) {
     })
 }
 
-function getapikey(req) {
-    let apikey = req.header('Authorization')
-    if (!apikey) {
-        let ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-        try {
-            ip = ip.substring(7)
-            let ipPrefix = ip.split('.').slice(0, -1).join('.')
-            //::ffff:103.163.220.17 -> use sha1(103.163.220) = c88cbdf6f85088bb9df9529d7823c5a3c736bfc5 as key
-            apikey = paraTool.sha1(ipPrefix)
-            if (apikey.length > 32) {
-                apikey = apikey.substring(0, 32);
-            }
-        } catch (err) {
-            query.logger.error({
-                "op": "getapikey",
-                err,
-                ip
-            });
+app.use(async (req, res, next) => {
+    setCrossOrigin(res)
+    next();
+    return;
+})
 
-        }
-    }
-    return (apikey);
-}
 
 function chainFilterOpt(req) {
     // default: return all chains
@@ -147,42 +127,21 @@ function decorateOpt(req, section = null) {
     return [decorate, decorateExtra]
 }
 
-const downtime = false;
-app.use(async (req, res, next) => {
-    setCrossOrigin(res)
-    let apikey = getapikey(req);
-    let result = await query.checkAPIKey(apikey);
-    if (downtime) {
-        var err = new Error("API is down for maintainance");
-        err.http_code = 503;
-        next(err);
-        return;
-    } else if (result.success) {
-        next();
-        return;
-    } else if (result.error) {
-        var err = new Error(result.error);
-        err.http_code = result.code;
-        next(err);
-        return;
-    } else {
-        next(Error("Unknown Error"));
-        return;
-    }
-})
-
 // Usage: http://api.polkaholic.io/
 app.get('/', async (req, res) => {
+    console.log("1111");
     try {
         let chains = await query.get_chains_external();
+	console.log(chains);
         if (chains) {
             res.write(JSON.stringify(chains));
-            await query.tallyAPIKey(getapikey(req));
+
             return res.end();
         } else {
             return res.sendStatus(404);
         }
     } catch (err) {
+	console.log(err);
         return res.status(400).json({
             error: err.toString()
         });
@@ -195,12 +154,12 @@ app.get('/chains', async (req, res) => {
         let chains = await query.get_chains_external();
         if (chains) {
             res.write(JSON.stringify(chains));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404);
         }
     } catch (err) {
+	console.log(err);
         return res.status(400).json({
             error: err.toString()
         });
@@ -238,7 +197,7 @@ app.get('/xcmtransfers', async (req, res) => {
         let xcmtransfers = await query.getXCMTransfers(filters, limit, decorate, decorateExtra);
         if (xcmtransfers) {
             res.write(JSON.stringify(xcmtransfers));
-            await query.tallyAPIKey(getapikey(req));
+
             res.end();
         } else {
             res.sendStatus(404);
@@ -278,7 +237,7 @@ app.get('/xcmmessages', async (req, res) => {
         let xcmmessages = await query.getRecentXCMMessages(filters, limit, decorate, decorateExtra);
         if (xcmmessages) {
             res.write(JSON.stringify(xcmmessages));
-            await query.tallyAPIKey(getapikey(req));
+
             res.end();
         } else {
             res.sendStatus(404);
@@ -298,7 +257,7 @@ app.get('/addresstopn/:topN', async (req, res) => {
         let addresstopn = await query.getAddressTopN(topN, decorate, decorateExtra);
         if (addresstopn) {
             res.write(JSON.stringify(addresstopn));
-            await query.tallyAPIKey(getapikey(req));
+
             res.end();
         } else {
             res.sendStatus(404);
@@ -318,7 +277,7 @@ app.get('/contract/:asset/:chainID_or_chainName?', async (req, res) => {
         let contract = await query.getEVMContract(asset, chainID_or_chainName);
         if (contract) {
             res.write(JSON.stringify(contract));
-            await query.tallyAPIKey(getapikey(req));
+
             res.end();
         } else {
             res.sendStatus(404);
@@ -337,7 +296,7 @@ app.get('/wasmcode/:chainID_or_chainName', async (req, res) => {
         let code = await query.getChainWASMCode(chainID_or_chainName);
         if (code) {
             res.write(JSON.stringify(code));
-            await query.tallyAPIKey(getapikey(req));
+
             res.end();
         } else {
             res.sendStatus(404);
@@ -357,7 +316,7 @@ app.get('/wasmcontracts/:chainID_or_chainName', async (req, res) => {
         let contracts = await query.getChainWASMContracts(chainID_or_chainName);
         if (contracts) {
             res.write(JSON.stringify(contracts));
-            await query.tallyAPIKey(getapikey(req));
+
             res.end();
         } else {
             res.sendStatus(404);
@@ -377,7 +336,7 @@ app.get('/specversions/:chainID_or_chainName', async (req, res) => {
         let specVersions = await query.getSpecVersions(chainID_or_chainName);
         if (specVersions) {
             res.write(JSON.stringify(specVersions));
-            await query.tallyAPIKey(getapikey(req));
+
             res.end();
         } else {
             res.sendStatus(404);
@@ -397,7 +356,6 @@ app.get('/chainlog/:chainID_or_chainName', async (req, res) => {
         let chainlog = await query.getChainLog(chainID_or_chainName);
         if (chainlog) {
             res.write(JSON.stringify(chainlog));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -417,7 +375,6 @@ app.get('/specversion/:chainID_or_chainName/:specVersion', async (req, res) => {
         let specVersionMetadata = await query.getSpecVersionMetadata(chainID_or_chainName, specVersion);
         if (specVersionMetadata) {
             res.write(JSON.stringify(specVersionMetadata));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -444,7 +401,6 @@ app.get('/chain/:chainID_or_chainName', async (req, res) => {
                 blocks: blocks
             };
             res.write(JSON.stringify(r));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404);
@@ -482,7 +438,6 @@ app.get('/chain/:assetType/:chainID_or_chainName?', async (req, res) => {
 
         if (assets) {
             res.write(JSON.stringify(assets));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -521,7 +476,6 @@ app.get('/pools/:assetType/:routerAssetChain', async (req, res) => {
         }
         if (pools) {
             res.write(JSON.stringify(pools));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -541,7 +495,6 @@ app.get('/xcmassetlog/:chainID/:chainIDDest/:symbol?', async (req, res) => {
         let xcmassetlog = await query.getChannelXCMAssetlog(chainID, chainIDDest, symbol);
         if (xcmassetlog) {
             res.write(JSON.stringify(xcmassetlog));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -567,7 +520,6 @@ app.get('/asset/pricelog/:asset/:chainID/:routerAssetChain?', async (req, res) =
         }
         let balances = await query.getAssetPriceFeed(q);
         res.write(JSON.stringify(balances));
-        await query.tallyAPIKey(getapikey(req));
         res.end();
     } catch (err) {
         return res.status(400).json({
@@ -590,7 +542,6 @@ app.get('/asset/pricefeed/:symbol/:relayChain/:routerAssetChain?', async (req, r
         }
         let balances = await query.getAssetPriceFeed(q);
         res.write(JSON.stringify(balances));
-        await query.tallyAPIKey(getapikey(req));
         res.end();
     } catch (err) {
         return res.status(400).json({
@@ -607,7 +558,6 @@ app.get('/asset/holders/:chainID/:asset', async (req, res) => {
         let holders = await query.getAssetHolders(chainID, asset);
         if (holders) {
             res.write(JSON.stringify(holders));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404).json();
@@ -627,7 +577,6 @@ app.get('/asset/related/:chainID/:asset', async (req, res) => {
         let assetsRelated = await query.getAssetsRelated(chainID, asset);
         if (assetsRelated) {
             res.write(JSON.stringify(assetsRelated));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404).json();
@@ -655,7 +604,6 @@ app.get('/hash/:hash', async (req, res) => {
                 }
             }
             res.write(JSON.stringify(hashrec));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -721,7 +669,6 @@ app.post('/search/:table', async (req, res) => {
                     cnt = cnt2;
                 }
                 res.write(JSON.stringify(results));
-                await query.tallyAPIKey(getapikey(req), cnt);
                 return res.end();
             } else {
                 return res.sendStatus(404).json();
@@ -743,7 +690,6 @@ app.get('/xcm/multilocation/:chainID_or_chainName', async (req, res) => {
         let mRes = await query.getMultilocation(chainID_or_chainName);
         if (mRes) {
             res.write(JSON.stringify(mRes));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -769,7 +715,6 @@ app.get('/block/:chainID_or_chainName/:blockNumber', async (req, res) => {
         var blk = await query.getBlock(chainID_or_chainName, blockNumber, blockHash, decorate, decorateExtra);
         if (blk) {
             res.write(JSON.stringify(blk));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404).json();
@@ -791,7 +736,6 @@ app.get('/trace/:chainID_or_chainName/:blockNumber/:blockHash?', async (req, res
         var trace = await query.getTrace(chainID_or_chainName, blockNumber, blockHash);
         if (trace) {
             res.write(JSON.stringify(trace));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404).json();
@@ -811,7 +755,6 @@ app.get('/hash/blockhash/:blockHash', async (req, res) => {
         var blk = await query.getBlockByHash(blockHash, decorate, decorateExtra);
         if (blk) {
             res.write(JSON.stringify(blk));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404).json();
@@ -853,7 +796,6 @@ app.get('/account/:address', async (req, res) => {
         let account = await query.getAccount(address, targetGroup, chainList, maxRows, ts, lookback, decorate, decorateExtra, pageIndex);
         if (account) {
             res.write(JSON.stringify(account));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404);
@@ -892,7 +834,6 @@ app.get('/account/:accountGroup/:address', async (req, res) => {
         }
         if (account) {
             res.write(JSON.stringify(account));
-            await query.tallyAPIKey(getapikey(req));
             return res.end();
         } else {
             return res.sendStatus(404);
@@ -912,7 +853,6 @@ async function txAPIRedirect(req, res) {
         let tx = await query.getTransaction(txHash, decorate, decorateExtra);
         if (tx) {
             res.write(JSON.stringify(tx));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -935,7 +875,6 @@ app.get('/xcmmessage/:msgHash/:sentAt?', async (req, res) => {
         let xcm = await query.getXCMMessage(msgHash, sentAt);
         if (xcm) {
             res.write(JSON.stringify(xcm));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -953,7 +892,6 @@ app.get('/event/:eventID', async (req, res) => {
         let ev = await query.getEvent(eventID);
         if (ev) {
             res.write(JSON.stringify(ev));
-            await query.tallyAPIKey(getapikey(req));
             res.end();
         } else {
             res.sendStatus(404);
@@ -965,42 +903,15 @@ app.get('/event/:eventID', async (req, res) => {
     }
 })
 
-app.use(function(err, req, res, next) {
-    var http_code = err.http_code ? err.http_code : 500;
-    var errString = err.toString();
-    if (!errString) errString = "Bad Request";
-    var e = {
-        code: http_code
-    };
-    if (isDevelopment) {
-        e.error = errString
-    }
-    res.status(http_code);
-    query.logger.error({
-        "op": "API",
-        err,
-        url: req.originalUrl
-    });
-    res.send(JSON.stringify(e));
-});
-
 
 const hostname = "::";
-if (isDevelopment) {
-    app.listen(port, hostname, () => {
-        console.log(`Polkaholic listening on port ${hostname}:${port} preemptively`)
-    })
-}
+
 let x = query.init();
 console.log(`[${new Date().toLocaleString()}] Initiating query`)
 Promise.all([x]).then(() => {
-    // delayed listening of your app
-    console.log(`[${new Date().toLocaleString()}] query ready`)
-    if (!isDevelopment) {
-        app.listen(port, hostname, () => {
-            console.log(`Polkaholic listening on port ${hostname}:${port}`)
-        })
-    }
+    app.listen(port, hostname, () => {
+        console.log(`Polkaholic listening on port ${hostname}:${port} preemptively`)
+    })
     // reload chains/assets/specVersions regularly
     query.autoUpdate()
 }).catch(err => {

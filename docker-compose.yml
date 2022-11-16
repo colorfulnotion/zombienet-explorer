@@ -1,0 +1,33 @@
+version: '2'
+services:
+  db:
+    image: zombienet-explorer
+    build: ./db
+    hostname: docker_db_1
+    ports:
+      - 9093:3306
+    volumes:
+      - ./mysql:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: zombienet
+      MYSQL_DATABASE: zombienet
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin123
+      MYSQL_ROOT_HOST: '%'
+  tempo: 
+    image: grafana/tempo:latest
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+      - ./tempo-data:/tmp/tempo
+    ports: 
+      - "3200:3200" #tempo
+      - "14268:14268" #jaegar
+      - "9411:9411" #zipkin
+  grafana-tempo-query:
+    image: grafana/tempo-query:latest
+    environment:
+      BACKEND: efinity-internal.polkaholic.io:3200
+    hostname: docker_tempo_query
+    ports:
+      - 8002:16686

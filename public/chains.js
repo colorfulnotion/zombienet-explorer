@@ -71,35 +71,26 @@ async function show_chains() {
             ],
             columnDefs: [{
                 "className": "dt-right",
-                "targets": [2, 3, 4, 5, 6, 7]
-            }, {
-                "targets": [8],
-                "visible": false
+                "targets": [2, 3, 4]
             }],
             order: [
                 [2, "desc"],
-                [5, "desc"],
             ],
             columns: [{
-                data: 'id',
+                data: 'chainName',
                 render: function(data, type, row, meta) {
                     if (type == 'display') {
                         let links = [];
-                        if (row.dappURL) {
-                            links.push(`<a href='${row.dappURL}' target='_new'>app</a>`);
-                        }
                         return presentChain(row.id, row.chainName, row.iconUrl, row.crawlingStatus) + `<div class="explorer">` + links.join(" | ") + `</div>`
                     }
                     return row.chainName;
                 }
             }, {
-                data: 'priceUSD',
+                data: 'id',
                 render: function(data, type, row, meta) {
                     if (type == 'display') {
                         try {
-                            // show symbol + price (linking to /symbol/:symbol)
-                            let symbol = row.symbol;
-                            return `<a href='/symbol/${symbol}'>${symbol}</a> ` + currencyFormat(row.priceUSD);
+                            console.log(row)
                         } catch {
 
                             return "-"
@@ -108,25 +99,16 @@ async function show_chains() {
                     return data;
                 }
             }, {
-                data: 'balanceUSD',
+                data: 'WSEndpoint',
                 render: function(data, type, row, meta) {
-                    try {
-                        // show account holdings summary on chain (linking to /xcmassets/${chainID})
-                        let balanceUSD = get_accountBalanceOnChain(row.chainID);
-                        if (type == 'display') {
-                            if (balanceUSD == null) {
-                                return "-Connect Wallet-";
-                            }
-                            let url = `/xcmassets/${row.chainID}`;
-                            return `<a href="${url}">` + currencyFormat(balanceUSD) + "</a>";
-                        } else {
-                            if (balanceUSD == null) return 0;
-                            return balanceUSD;
+                    if (type == 'display') {
+                        try {
+                            return presentWSEndpoint(row.WSEndpoint);
+                        } catch {
+                            return "-"
                         }
-                    } catch {
-                        return "-"
                     }
-                    return 0;
+                    return data;
                 }
             }, {
                 data: 'blocksCovered',
@@ -151,46 +133,6 @@ async function show_chains() {
                         } catch {
                             return "-"
                         }
-                    }
-                    return data;
-                }
-            }, {
-                data: 'numAccountsActive7d',
-                render: function(data, type, row, meta) {
-                    try {
-                        if (type == 'display') {
-                            let url = `/chainlog/${row.id}`
-                            return `<a href="${url}">` + presentNumber(data) + "</a>";
-                        }
-                        return data;
-                    } catch {
-                        return "-"
-                    }
-                }
-            }, {
-                data: 'numXCMTransferIncoming7d',
-                render: function(data, type, row, meta) {
-                    if (type == 'display') {
-                        let url = `/xcmtransfers/${row.id}`
-                        return `<a href="${url}">` + presentNumber(data) + " " + currencyFormat(row.valXCMTransferIncomingUSD7d) + "</a>";
-                    } else {
-                        return row.valXCMTransferIncomingUSD7d;
-                    }
-                }
-            }, {
-                data: 'numXCMTransferOutgoing7d',
-                render: function(data, type, row, meta) {
-                    if (type == 'display') {
-                        let url = `/xcmtransfers/${row.id}`
-                        return `<a href="${url}">` + presentNumber(data) + " " + currencyFormat(row.valXCMTransferOutgoingUSD7d) + "</a>";
-                    }
-                    return row.valXCMTransferOutgoingUSD7d;
-                }
-            }, {
-                data: 'relayChain', //this is the 'hidden' column that we use to supprt filter
-                render: function(data, type, row, meta) {
-                    if (type == 'display') {
-                        return data;
                     }
                     return data;
                 }

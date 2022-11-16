@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkaholic.  If not, see <http://www.gnu.org/licenses/>.
 
-const PolkaholicDB = require("./polkaholicDB");
+const ExplorerDB = require("./explorerDB");
 const paraTool = require("./paraTool");
 const uiTool = require("./uiTool");
 const mysql = require("mysql2");
@@ -30,7 +30,7 @@ const {
 } = require('@polkadot/api');
 const MAX_PRICEUSD = 100000.00;
 
-module.exports = class AssetManager extends PolkaholicDB {
+module.exports = class AssetManager extends ExplorerDB {
 
     assetInfo = {};
     alternativeAssetInfo = {};
@@ -113,13 +113,9 @@ module.exports = class AssetManager extends PolkaholicDB {
     }
 
     async chainParserInit(chainID, debugLevel = 0) {
-        if (this.chainParser && (this.chainParserChainID == chainID)) return;
+        /*if (this.chainParser && (this.chainParserChainID == chainID)) return;
         if (chainID == paraTool.chainIDKarura || chainID == paraTool.chainIDAcala) {
             this.chainParser = new AcalaParser();
-            /*
-            } else if (chainID == paraTool.chainIDBifrostDOT || chainID == paraTool.chainIDBifrostKSM) {
-                this.chainParser = new BifrostParser();
-            */
         } else if (chainID == paraTool.chainIDAstar || chainID == paraTool.chainIDShiden || chainID == paraTool.chainIDShibuya) {
             this.chainParser = new AstarParser();
         } else if (chainID == paraTool.chainIDParallel || chainID == paraTool.chainIDHeiko) {
@@ -131,9 +127,9 @@ module.exports = class AssetManager extends PolkaholicDB {
             this.chainParser = new InterlayParser();
         } else if (chainID == paraTool.chainIDKico) {
             this.chainParser = new KicoParser();
-        } else {
-            this.chainParser = new ChainParser();
         }
+	*/
+        this.chainParser = new ChainParser();
         if (this.chainParser) {
             this.chainParserChainID = chainID;
         }
@@ -148,8 +144,7 @@ module.exports = class AssetManager extends PolkaholicDB {
         let chainSQL = `select id, chain.chainID, chain.chainName, chain.relayChain, paraID, ss58Format, isEVM, chain.iconUrl,
  xcmasset.symbol, xcmasset.decimals, xcmasset.priceUSD, xcmasset.priceUSDPercentChange,
  githubURL, subscanURL, parachainsURL, dappURL, WSEndpoint
- from chain left join xcmasset on chain.symbol = xcmasset.symbol where ( (crawling = 1 or paraID > 0 or chain.relayChain = '${paraTool.getRelayChainByChainID(60000)}') and id is not null);`
-        //console.log(`init_chainInfos chainSQL`, paraTool.removeNewLine(chainSQL))
+ from chain left join xcmasset on chain.symbol = xcmasset.symbol;`
         var chains = await this.poolREADONLY.query(chainSQL);
         var specVersions = await this.poolREADONLY.query(`select chainID, blockNumber, specVersion from specVersions order by chainID, blockNumber`);
         var assets = await this.poolREADONLY.query(`select asset, chainID, symbol, decimals from asset where decimals is not Null and asset not like '0x%' `);
@@ -160,6 +155,7 @@ module.exports = class AssetManager extends PolkaholicDB {
 
         let chainInfoMap = {}
         let chainNameMap = {}
+
         for (const chain of chains) {
             let decimals = parseInt(chain.decimals, 10)
             let paraID = parseInt(chain.paraID, 10)
@@ -206,7 +202,6 @@ module.exports = class AssetManager extends PolkaholicDB {
 
 
     async assetManagerInit() {
-
         //init_chainInfos: {chainInfos, chainNames, specVersions}
         await this.init_chainInfos()
 
