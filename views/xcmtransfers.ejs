@@ -1,0 +1,36 @@
+<%- include('header', {chainInfo: chainInfo, title: "XCM Transfers"}); %>
+
+<h5>XCM Transfers</h5>
+
+<table id="tablexcmtransfers" class="display" style='width: 100%'>
+      <thead>
+        <tr>
+          <th><%- include("tooltip", {k: "module"}) %>Section:Method</th>
+          <th><%- include("tooltip", {k: "value"}) %>Value</th>
+          <th><%- include("tooltip", {k: "valueusd"}) %>Value (USD)</th>
+          <th><%- include("tooltip", {k: "sender"}) %>Sender</th>
+          <th><%- include("tooltip", {k: "beneficiary"}) %>Beneficiary</th>
+          <th><%- include("tooltip", {k: "origination"}) %>From Chain/Extrinsic ID</th>
+          <th><%- include("tooltip", {k: "destination"}) %>To Chain</th>
+          <th><%- include("tooltip", {k: "txtimestamp"}) %>Date</th>
+          <th>Relay</th>
+        </tr>
+      </thead>
+</table>
+
+<%- include('footer', {apiUrl: apiUrl}); %>
+<script>
+let id = '<% id %>';
+let data = <%- JSON.stringify(data) %>;
+
+$(document).ready(function() {
+    showxcmtransfers(null);
+    let table = $("#tablexcmtransfers").DataTable();
+    table.clear();
+    table.rows.add(data)
+    table.draw();
+});
+</script>
+<script src="/chains.js"></script>
+<script src="/chainui.js"></script>
+

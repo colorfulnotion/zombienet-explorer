@@ -1,0 +1,41 @@
+<table>
+<% if ( decoded ) {
+    let funcDesc = (decoded.signature)? `${decoded.signature}` : ''
+    let methodIDDesc = (decoded.methodID)?  `${decoded.methodID}` : ''
+    if (funcDesc != ''){
+        params.unshift({
+            name: 'function',
+            type: '',
+            value: funcDesc,
+        })
+    }
+    if (methodIDDesc != "0x"){
+        params.unshift({
+            name: 'methodID',
+            type: '',
+            value: methodIDDesc,
+        })
+    }
+%>
+<% } %>
+<% for ( let j=0; j< params.length; j++) {
+     let e = params[j]; %>
+  <tr>
+   <th><%- e.name; %>
+       &ensp;
+   </th>
+   <td><%- e.type; %>
+       &emsp;
+   </td>
+   <td>
+   <% if ( e.type == "address" ) { %>
+   <%- uiTool.presentID(e.value); %>
+   <% } else if ( e.type == "address[]" ) { %>
+   <%- uiTool.presentIDs(e.value); %>
+   <% } else { %>
+   <%- e.value; %>
+   <% } %>
+   </td>
+  </tr>
+<% } %>
+</table>

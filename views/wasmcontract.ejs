@@ -1,0 +1,81 @@
+<%- include('header', {chainInfo: chainInfo, title: "WASM Contract"}); %>
+
+<!-- Nav tabs -->
+<ul class="nav nav-tabs" style="font-size:1rem" id="wasmcontractTab" role="tablist">
+<%
+let tabs = [
+{ title: "Overview", target: "overview" },
+];
+
+if ( contract.metadata ) {
+  tabs.push({ title: "Contract", target: "contract" });
+}
+
+for (let i=0; i<tabs.length; i++) {
+  let t = tabs[i];
+  let title = t.title;
+  let target = t.target;
+  let id = target + "-tab";
+  let href = "#" + target;
+%>
+  <li class="nav-item" role="presentation">
+    <a class="nav-link" id="<%= id; %>" data-mdb-toggle="tab" href="<%= href; %>" role="tab" aria-controls="<%= target; %>"><%= title; %></a>
+  </li>
+<%
+}
+%>
+</ul>
+
+
+<!-- Tab panes -->
+<div class="tab-content">
+  <div class="tab-pane" id="overview" role="tabpanel" aria-labelledby="overview-tab">
+     <%- include('wasmcontractOverview', {contract: contract}); %>
+  </div>
+
+  <div class="tab-pane" id="contract" role="tabpanel" aria-labelledby="contract-tab">
+  <div class="row w-100">
+   <div class="col-2">
+    <div class="nav flex-column nav-tabs text-center" id="v-tabs-tab" role="tablist" aria-orientation="vertical">
+      <a class="nav-link active" id="v-tabs-read-tab"     data-mdb-toggle="tab" href="#v-tabs-read" role="tab" aria-controls="v-tabs-read" aria-selected="true">Read Contract</a>
+      <a class="nav-link" id="v-tabs-write-tab"    data-mdb-toggle="tab" href="#v-tabs-write" role="tab" aria-controls="v-tabs-write" aria-selected="false">Write Contract</a>
+      <a class="nav-link" id="v-tabs-code-tab" data-mdb-toggle="tab" href="#v-tabs-code" role="tab" aria-controls="v-tabs-code" aria-selected="false">Code / Upload</a>
+    </div>
+   </div>
+   
+   <div class="col-10">
+    <div class="tab-content" id="v-tabs-tabContent">
+      <div class="tab-pane fade show active" id="v-tabs-read" role="tabpanel" aria-labelledby="v-tabs-read-tab">
+      </div>
+
+      <div class="tab-pane fade" id="v-tabs-write" role="tabpanel" aria-labelledby="v-tabs-write-tab">
+      </div>
+
+      <div class="tab-pane fade" id="v-tabs-code" role="tabpanel" aria-labelledby="v-tabs-code-tab">
+    <form method="post" action="/uploadcontract/<%= address; %>" enctype="multipart/form-data">
+      <label class="form-label" for="customFile">Upload .contract data</label>
+      <input type="file" class="form-control" name="contractFile" id="contractFile" />
+      <input type='submit'>
+    </form>
+      </div>
+
+     </div>
+   </div>
+  </div>
+  </div>
+</div>
+
+<script>
+var baseURL = '<%= config.baseURL; %>'
+let address = '<%= contract.address; %>';
+let addressSS58 = "<%= contract.address58; %>"; 
+let tabs = <%- JSON.stringify(tabs); %>;
+let metadata = <%- contract.metadata; %>;
+$(document).ready(function() {
+  readContract(<%= contract.chainID %>, metadata, address);
+});
+</script>
+
+<script src="/wasmcontractui.js"></script>
+<script src="/wasmcontract.js"></script>
+<%- include('footer', {apiUrl: apiUrl}); %>

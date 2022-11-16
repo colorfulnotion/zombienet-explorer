@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+ // Usage:  updateAddressBalances
+var Manager = require("./manager");
+async function main() {
+    var manager = new Manager();
+    let chainID = -1;
+    process.argv.forEach(function(val, index, array) {
+        if (index == 2 && val.length > 0) {
+            chainID = parseInt(val, 10);
+        }
+    });
+    if ( chainID >= 0 ) {
+	await manager.updateNativeBalances(chainID);
+	await manager.updateNonNativeBalances(chainID);
+	await manager.update_chain_lastBalanceUpdateDT(chainID);
+    } else {
+	chainID = await manager.get_chain_balance_update();
+	try {
+	    if ( chainID != null ) {
+		await manager.updateNativeBalances(chainID);
+		await manager.updateNonNativeBalances(chainID);
+	    }
+	    await manager.update_chain_lastBalanceUpdateDT(chainID, true);
+	} catch (e) {
+	    await manager.update_chain_lastBalanceUpdateDT(chainID, true);
+	}
+	await manager.updateAddressBalances()
+	await manager.computeAddressColumnsBQ("transfersIn");
+	await manager.computeAddressColumnsBQ("extrinsics");
+	await manager.computeAddressColumnsBQ("crowdloans");
+	await manager.computeAddressColumnsBQ("rewards");
+	await manager.computeAddressColumnsBQ("transfersOut"); 
+	await manager.updateAddressTopN();
+    }
+}
+
+main()
+    .then(() => {
+        process.exit(0);
+    })
+    .catch((e) => {
+        console.error('ERROR', e);
+        process.exit(1);
+    });

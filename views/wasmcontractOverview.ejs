@@ -1,0 +1,73 @@
+<%
+let f = contract;
+%>
+<table class="table table-hover table-bordered">
+  <tbody>
+    <tr>
+      <td width="200">Contract Address</td>
+      <td><code><%- uiTool.getShortHash(f.address, false) %></code>
+      </td>
+    </tr>
+
+    <tr>
+      <td width="200">Code Hash</td>
+      <td>
+        <a href='/wasmcode/<%= f.codeHash %>'><%- uiTool.getShortHash(f.codeHash, false) %></a>
+      </td>
+    </tr>
+
+    <tr>
+      <td>Created</td>
+      <td>
+	<%= uiTool.presentTS(f.blockTS); %>
+      </td>
+    </tr>
+
+    <tr>
+      <td>Salt</td>
+      <td><%= f.salt %></td>
+    </tr>
+
+    <tr>
+      <td>Deployer</td>
+      <td><%- uiTool.presentID(f.deployer) %></td>
+    </tr>
+
+    <tr>
+      <td>Chain</td>
+      <td>
+        <a href='/blocks/<%= f.chainID; %>'><%= f.chainName; %></a>
+        <%- include("blockNumber", {chainID: f.chainID, blockNumber: f.sourceBlocknumber}); %>
+      </td>
+    </tr>
+
+    <tr>
+      <td>Instantiated At</td>
+      <td>
+        <a href='/blocks/<%= f.id; %>'><%= uiTool.capitalizeFirstLetter(f.chainName); %></a>
+        <%- include("blockNumber", {chainID: f.chainID, blockNumber: f.instantiateBN}); %>
+      </td>
+    </tr>
+
+    <tr>
+      <td>Constructor</td>
+      <td>
+          <code><%- contract.constructor %></code>
+      </td>
+    </tr>
+
+    <tr>
+       <td>WASM Contract Metadata</td>
+       <td>
+       <%- include("decode", {id: "metadata", obj: JSON.parse(contract.metadata), verify: null, size: [] }); %>
+       </td>
+    </tr>
+
+    <tr>
+      <td>WASM</td>
+      <td>
+          <textarea style='width: 800px; height: 400px'><%- contract.wasm %></textarea>
+      </td>
+    </tr>
+  </tbody>
+</table>

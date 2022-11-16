@@ -1,0 +1,74 @@
+#!/usr/bin/env node
+ // Usage:  xcmmatch [lookbackDays] [rematch]
+var XCMManager = require("./xcmmanager");
+
+async function main() {
+    let lookbackDays = 0;
+    let forceRematch = 0;
+    process.argv.forEach(function(val, index, array) {
+        if (index == 2 && val.length > 0) {
+            lookbackDays = parseInt(val, 10);
+        }
+        if (index == 3 && val.length > 0) {
+            forceRematch = parseInt(val, 10);
+        }
+    });
+
+    let lastUpdateTS = 0;
+    var manager = new XCMManager();
+    manager.init_xcm_error_map();
+    await manager.xcm_init()
+    await manager.assetManagerInit();
+    let chain = await manager.getChain(2);
+    await manager.setupAPI(chain);
+
+    if (lookbackDays > 0) {
+        await manager.xcmanalytics(chain, lookbackDays, forceRematch)
+        process.exit(0);
+    }
+
+    let startTS = manager.currentTS() - 3600;
+    const lookbackSeconds = 120;
+    let numRecs = 0;
+    let lastGeneralUpdateTS = manager.getCurrentTS();
+    do {
+        // startTS that comes back is the last message unix timestamp
+        [numRecs, startTS] = await manager.xcmanalytics_period(chain, startTS - 3600);
+
+        console.log("***** numRecs ", numRecs, "startTS = ", startTS)
+        if (numRecs == 0) {
+            // this polls every like 1s for a new xcmmessage after startTS, and returns with the timestamp of the first message seen, which is used to start the next process
+            await manager.waitForNewXCMMessage(startTS);
+        } else {
+            await manager.sleep(6000);
+        }
+
+        let lastUpdateTSAgo = manager.getCurrentTS() - lastUpdateTS
+        if (lastUpdateTSAgo > 600) {
+            //update once every 600s
+            console.log(`update assetManager now`)
+            lastUpdateTS = manager.getCurrentTS()
+            await manager.assetManagerInit();
+            let lastGeneralUpdateTSAgo = manager.getCurrentTS() - lastGeneralUpdateTS
+	    if ( lastGeneralUpdateTSAgo > 3600 ) {
+		await manager.update_xcmlogs(1);
+		await manager.updateXcAssetContractAddr()
+		await manager.updateXcmTransferRoute();
+		await manager.updateHrmpChannelEvents();
+		lastGeneralUpdateTS = manager.getCurrentTS();
+	    }
+	}
+    } while (true);
+}
+
+
+main()
+    .then(() => {
+        console.log("finishing...")
+
+        process.exit(0);
+    })
+    .catch((e) => {
+        console.error('ERROR', e);
+        process.exit(1);
+    });
