@@ -56,50 +56,6 @@ module.exports = class Query extends AssetManager {
             await this.init();
         }
     }
-    async checkAPIKey(apikey) {
-        let minkey = this.currentMinuteKey();
-        let ratekey = `rate:${minkey}`;
-        let ratelimit = 300;
-        let usage = 0;
-        try {
-            const [row] = await this.btAPIKeys.row(apikey).get([ratekey, "n"]);
-            if (row["n"] && row["n"]["ratelimit"]) {
-                let x = row["n"]["ratelimit"];
-                ratelimit = parseInt(x[0].value, 10);
-            }
-            if (row["rate"] && row["rate"][minkey]) {
-                let y = row["rate"][minkey];
-                if (y.length > 0) {
-                    usage = y[0].value;
-                }
-            }
-            //console.log("checkAPIKey", apikey, "usage", usage, "ratelimit", ratelimit);
-            if (usage < ratelimit) {
-                return ({
-                    "success": true
-                });
-            } else {
-                return ({
-                    "error": "rate limit exceeded",
-                    "code": 429
-                });
-            }
-        } catch (e) {
-            if (e.code == 404) {
-                //console.log("checkAPIKey 404", apikey)
-                return ({
-                    "success": true
-                });
-            } else {
-                return ({
-                    "error": "general error",
-                    "code": 401
-                });
-            }
-        }
-
-    }
-
     currentMinuteKey() {
         let today = new Date();
         let dd = today.getUTCDate().toString().padStart(2, '0');
@@ -110,426 +66,16 @@ module.exports = class Query extends AssetManager {
         return `${yyyy}${mm}${dd}-${hr}${min}`;
     }
 
-    async tallyAPIKey(apikey, cnt = 1) {
-        // increment "rate" cell
-        try {
-            let minkey = this.currentMinuteKey();
-            let ratekey = `rate:${minkey}`;
-            const row = this.btAPIKeys.row(apikey);
-            await row.increment(ratekey, cnt);
-            return (true);
-        } catch (e) {
-            console.log(e);
-        }
-        return (true);
-    }
-
-
-    canonicalizeEmail(e) {
-        return e.trim().toLowerCase();
-    }
-
-    getPasswordHash(h) {
-        let SALT = (process.env.POLKAHOLIC_SALT != undefined) ? process.env.POLKAHOLIC_SALT : "";
-        return uiTool.blake2(`${SALT}${h}`)
-    }
-
-    create_api_key(email) {
-        let ts = Math.floor(Date.now() / 1000)
-        let raw = uiTool.blake2(email + ts.toString());
-        raw = raw.substring(2, 34);
-        return (raw);
-    }
-
-    async userExists(email) {
-        var sql = `select password from user where email = '${email}' limit 1`;
-        let users = await this.poolREADONLY.query(sql);
-        return (users.length > 0)
-    }
-
     async getRuntimeExtrinsics(chain) {
-        var sql = `select section, method, numStars, numExtrinsics, numExtrinsics30d, numExtrinsics7d from extrinsics where chainID = '${chain.chainID}' order by section, method`;
+        var sql = `select section, method, numStars, numExtrinsics from extrinsics where chainID = '${chain.chainID}' order by section, method`;
         let extrinsics = await this.poolREADONLY.query(sql);
         return (extrinsics);
     }
 
     async getRuntimeEvents(chain) {
-        var sql = `select section, method, numStars, numEvents, numEvents30d, numEvents7d from events where chainID = '${chain.chainID}' order by section, method`;
+        var sql = `select section, method, numStars, numEvents from events where chainID = '${chain.chainID}' order by section, method`;
         let events = await this.poolREADONLY.query(sql);
         return events;
-    }
-
-    resetPasswordSig(toMail, ts) {
-        let h = ts + toMail + this.POLKAHOLIC_EMAIL_PASSWORD;
-        let sig = uiTool.blake2(h);
-        return sig;
-    }
-
-    async sendResetPasswordLink(toMail) {
-        // include nodemailer
-        const nodemailer = require('nodemailer');
-        // declare vars
-        let fromMail = 'info@polkaholic.io';
-
-        let subject = 'Polkaholic.io Password Reset';
-        let ts = new Date().getTime().toString();
-        let sig = this.resetPasswordSig(toMail, ts);
-        let RESETURL = `http://polkaholic.io/resetpassword/${toMail}/${ts}/${sig}`
-        let text = `To reset your password on Polkaholic click this link:\r\n${RESETURL}`;
-
-        // auth
-        var transporter = nodemailer.createTransport({
-            service: 'Godaddy',
-            secureConnection: false,
-            auth: {
-                user: this.POLKAHOLIC_EMAIL_USER,
-                pass: this.POLKAHOLIC_EMAIL_PASSWORD
-            }
-        });
-
-        // email options
-        let mailOptions = {
-            from: fromMail,
-            to: toMail,
-            subject: subject,
-            text: text
-        };
-
-        // send email
-        transporter.sendMail(mailOptions, (error, response) => {
-            if (error) {
-                console.log(error);
-            }
-        });
-    }
-
-    async resetPassword(email, password, ts, sig) {
-        let expectedSig = this.resetPasswordSig(email, ts);
-        if (sig != expectedSig) return ({
-            error: "Could not reset password"
-        });
-
-        var passwordHash = this.getPasswordHash(password)
-        let sql = `update user set password = ${mysql.escape(passwordHash)} where email = ${mysql.escape(email)}`;
-        try {
-            this.batchedSQL.push(sql);
-            await this.update_batchedSQL();
-            return ({
-                success: true
-            });
-        } catch (e) {
-            this.logger.error({
-                "op": "query.resetPassword",
-                sql,
-                err
-            });
-            return ({
-                error: "Could not reset password"
-            });
-        }
-    }
-
-    async followUser(rawFromAddress, rawToAddress) {
-        try {
-            let fromAddress = paraTool.getPubKey(rawFromAddress)
-            let toAddress = paraTool.getPubKey(rawToAddress)
-            // check that we aren't following the user already
-            // TODO: validate fromAddress + toAddress
-            let sql0 = `select isFollowing from follow where fromAddress = '${fromAddress}' and toAddress = '${toAddress}'`
-            let isFollowing = await this.poolREADONLY.query(sql0)
-            if (isFollowing.length == 0) {
-                var sql = `insert into follow ( fromAddress, toAddress, isFollowing, followDT ) values (${mysql.escape(fromAddress)}, ${mysql.escape(toAddress)}, 1, Now() )`
-                var sql2 = `insert into account ( address, numFollowing ) values (${mysql.escape(fromAddress)}, 1 ) on duplicate key update numFollowing = numFollowing + 1`
-                var sql3 = `insert into account ( address, numFollowers ) values (${mysql.escape(toAddress)}, 1 ) on duplicate key update numFollowers = numFollowers + 1`
-                this.batchedSQL.push(sql);
-                this.batchedSQL.push(sql2);
-                this.batchedSQL.push(sql3);
-                await this.update_batchedSQL();
-                return ({
-                    success: true
-                });
-            } else {
-                return ({
-                    error: "already following"
-                });
-            }
-        } catch (e) {
-            this.logger.error({
-                "op": "query.followUser",
-                rawFromAddress,
-                rawToAddress,
-                err
-            });
-            return ({
-                error: "Could not follow user"
-            });
-        }
-    }
-
-    async unfollowUser(rawFromAddress, rawToAddress) {
-        try {
-            let fromAddress = paraTool.getPubKey(rawFromAddress)
-            let toAddress = paraTool.getPubKey(rawToAddress)
-            // TODO: validate fromAddress + toAddress
-            // check that we are following the user already
-            let sql0 = `select isFollowing from follow where fromAddress = '${fromAddress}' and toAddress = '${toAddress}'`
-            let isFollowing = await this.poolREADONLY.query(sql0)
-            if (isFollowing.length > 0) {
-                // TODO: make this a transaction
-                var sql = `delete from follow where fromAddress = ${mysql.escape(fromAddress)} and toAddress = ${mysql.escape(toAddress)}`
-                var sql2 = `update account set numFollowing = numFollowing - 1 where address = ${mysql.escape(fromAddress)}`
-                var sql3 = `update account set numFollowers = numFollowers - 1 where address = ${mysql.escape(toAddress)}`
-                this.batchedSQL.push(sql);
-                this.batchedSQL.push(sql2);
-                this.batchedSQL.push(sql3);
-                await this.update_batchedSQL();
-                return ({
-                    success: true
-                });
-            } else {
-                return ({
-                    error: "not following"
-                });
-            }
-        } catch (e) {
-            this.logger.error({
-                "op": "query.followUser",
-                rawFromAddress,
-                rawToAddress,
-                err
-            });
-
-            return ({
-                error: "Could not unfollow user"
-            });
-        }
-    }
-
-    async getFollowers(rawToAddress, rawUserAddress = false, decorate = true, decorateExtra = ["data", "address", "usd", "related"]) {
-        try {
-            let [decorateData, decorateAddr, decorateUSD, decorateRelated] = this.getDecorateOption(decorateExtra)
-
-            let toAddress = paraTool.getPubKey(rawToAddress)
-            var sql = `select fromAddress, 0 as isFollowing from follow where toAddress = '${toAddress}' order by followDT desc limit 500`
-            let followers = await this.poolREADONLY.query(sql);
-            if (rawUserAddress) {
-                let isFollowing = {};
-                let userAddress = paraTool.getPubKey(rawUserAddress)
-
-                let sql0 = `select toAddress from follow where fromAddress = '${userAddress}' limit 500`
-                let userFollowing = await this.poolREADONLY.query(sql0);
-                for (let i = 0; i < userFollowing.length; i++) {
-                    let u = userFollowing[i];
-                    isFollowing[u.toAddress] = 1;
-                }
-                for (let i = 0; i < followers.length; i++) {
-                    if (decorate) this.decorateAddress(followers[i], "toAddress", decorateAddr, decorateRelated);
-                    if (isFollowing[followers[i].toAddress] !== undefined) {
-                        followers[i].isFollowing = 1;
-                    }
-                }
-                return (followers);
-            }
-        } catch (err) {
-            this.logger.error({
-                "op": "query.getFollowers",
-                rawToAddress,
-                rawUserAddress,
-                err
-            });
-        }
-        return [];
-    }
-
-    async getFollowing(rawFromAddress, rawUserAddress = false, decorate = true, decorateExtra = ["data", "address", "usd", "related"]) {
-        try {
-            let [decorateData, decorateAddr, decorateUSD, decorateRelated] = this.getDecorateOption(decorateExtra)
-
-            let fromAddress = paraTool.getPubKey(rawFromAddress)
-            var sql = `select toAddress, 0 as isFollowing from follow where fromAddress = '${fromAddress}' order by followDT desc limit 500`
-            let following = await this.poolREADONLY.query(sql);
-            let isFollowing = {};
-            if (rawUserAddress) {
-                let userAddress = paraTool.getPubKey(rawUserAddress)
-                let sql0 = `select toAddress from follow where fromAddress = '${userAddress}' limit 500`
-                let userFollowing = await this.poolREADONLY.query(sql0);
-                for (let i = 0; i < userFollowing.length; i++) {
-                    let u = userFollowing[i];
-                    isFollowing[u.toAddress] = 1;
-                }
-                for (let i = 0; i < following.length; i++) {
-                    if (decorate) this.decorateAddress(following[i], "toAddress", decorateAddr, decorateRelated);
-                    if (isFollowing[following[i].toAddress] !== undefined) {
-                        following[i].isFollowing = 1;
-                    }
-                }
-            }
-            return (following);
-        } catch (err) {
-            console.log(err);
-            this.logger.error({
-                "op": "query.getFollowers",
-                rawFromAddress,
-                rawUserAddress,
-                err
-            });
-            return [];
-        }
-        return [];
-    }
-
-    async registerUser(email, password) {
-        email = this.canonicalizeEmail(email);
-        if (!uiTool.validEmail(email)) {
-            return ({
-                error: `Invalid email: ${email}`
-            });
-        }
-        if (!uiTool.validPassword(password)) {
-            return ({
-                error: "Invalid password (must be 6 chars or more)"
-            });
-        }
-        let userAlreadyExists = await this.userExists(email);
-        if (userAlreadyExists) {
-            return ({
-                error: "User already exists."
-            });
-        }
-        var passwordHash = this.getPasswordHash(password)
-        try {
-            var sql = `insert into user ( email, password, createDT ) values (${mysql.escape(email)}, ${mysql.escape(passwordHash)}, Now() )`
-            this.batchedSQL.push(sql);
-            await this.update_batchedSQL();
-            return ({
-                success: true
-            });
-        } catch (e) {
-            this.logger.error({
-                "op": "query.registerUser",
-                email,
-                passwordHash,
-                err
-            });
-            return ({
-                error: "Could not register user"
-            });
-        }
-    }
-
-    async validateUser(email, password) {
-        let passwordHash = this.getPasswordHash(password)
-        try {
-            var sql = `select password from user where email = '${email}' limit 1`;
-            let users = await this.poolREADONLY.query(sql);
-            if (users.length == 0) {
-                return {
-                    error: "Email not found"
-                };
-            }
-            if (users.length == 1 && (users[0].password != passwordHash)) {
-                return {
-                    error: "Password incorrect"
-                };
-            }
-            return ({
-                success: true
-            });
-        } catch (err) {
-            this.logger.error({
-                "op": "query.validateUser",
-                email,
-                passwordHash,
-                err
-            });
-            return ({
-                error: "Could not validate your account"
-            })
-        }
-    }
-
-    async updateAPIKeyPlan(email, apikey, planID) {
-        // TODO with stripe
-        try {
-            // update bigtable with new PlanID
-            let ratelimit = this.getPlanRateLimit(planID);
-            let nrec = {};
-            nrec["ratelimit"] = {
-                value: JSON.stringify(ratelimit),
-                timestamp: new Date()
-            };
-            let rowsToInsert = [{
-                key: apikey,
-                data: {
-                    n: nrec
-                }
-            }];
-            await this.btAPIKeys.insert(rowsToInsert);
-
-            var sql = `update apikey set planID = ${mysql.escape(planID)} where email = ${mysql.escape(email)} and apikey = ${mysql.escape(apikey)}`;
-            this.batchedSQL.push(sql);
-            await this.update_batchedSQL();
-            return (true);
-        } catch (err) {
-            this.logger.error({
-                "op": "query.updateAPIKeyPlan",
-                email,
-                apikey,
-                err
-            });
-            return (false);
-        }
-    }
-
-    getAPIKeyPlan(loggedInEmail, apikey) {}
-    async getAPIKeys(email) {
-        var sql = `select apikey, createDT, planID from apikey where email = '${email}' and deleted = 0 limit 100`;
-        try {
-            let apikeys = await this.poolREADONLY.query(sql);
-            return (apikeys);
-        } catch (e) {
-            this.logger.error({
-                "op": "query.getAPIKeys",
-                email,
-                apikey,
-                err
-            });
-            return (false);
-        }
-    }
-
-    // # of request allowed per minute
-    getPlanRateLimit(planID) {
-        switch (planID) {
-            case 1:
-                return (1200); // 20 QPS
-            case 2:
-                return (6000); // 100 QPS
-            case 3:
-                return (30000); // 500 QPS
-            default:
-                return (300); // 5 QPS
-        }
-    }
-
-    getPlans() {
-        return [{
-            name: "Developer",
-            monthlyUSD: 0,
-            minuteLimit: this.getPlanRateLimit(0)
-        }, {
-            name: "Lite",
-            monthlyUSD: 199,
-            minuteLimit: this.getPlanRateLimit(1)
-        }, {
-            name: "Pro",
-            monthlyUSD: 399,
-            minuteLimit: this.getPlanRateLimit(2)
-        }, {
-            name: "Enterprise",
-            monthlyUSD: 1999,
-            minuteLimit: this.getPlanRateLimit(3)
-        }];
     }
     async search_address(addr) {
         let res = [];
@@ -781,13 +327,10 @@ module.exports = class Query extends AssetManager {
 
     async search_hash(hash) {
         let res = [];
-        let families = ['feed', 'feedunfinalized', 'feedevmunfinalized', 'feedpending'] // 3 columnfamily
+        let hashes = this.poolREADONLY.query(`select data from hashes where hash = '${hash}' order by finalized desc`)
+	
         try {
-            let [rows] = await this.btHashes.getRows({
-                keys: [hash]
-            });
-            rows.forEach((row) => {
-                let rowData = row.data;
+	    for ( const rowData of hashes ) {
                 //priority: use feed then feedunfinalized/feedevmunfinalized
                 let data = false
                 if (rowData["feed"]) {
@@ -832,19 +375,14 @@ module.exports = class Query extends AssetManager {
                         }
                     }
                 }
-            });
+            }
         } catch (err) {
-            if (err.code == 404) {
-                console.log("NOT FOUND", hash);
-                return res;
-            } else {
                 console.log(err);
                 this.logger.error({
                     "op": "query.search_hash",
                     hash,
                     err
                 });
-            }
         }
         return res;
     }
@@ -995,8 +533,7 @@ module.exports = class Query extends AssetManager {
         }
     }
 
-    //WARNING: This call is exposed externally. should not include any non-public ws
-    async getChain(chainID_or_chainName, isExternal = false) {
+    async getChain(chainID_or_chainName) {
         let [chainID, id] = this.convertChainID(chainID_or_chainName)
         if (chainID === false) {
             throw new paraTool.NotFoundError(`Chain not found: ${chainID_or_chainName}`)
@@ -1005,50 +542,16 @@ module.exports = class Query extends AssetManager {
         try {
             let chains = await this.poolREADONLY.query(`select id, chainID, chainName, blocksCovered, blocksFinalized, symbol, UNIX_TIMESTAMP(lastCrawlDT) as lastCrawlTS, UNIX_TIMESTAMP(lastFinalizedDT) as lastFinalizedTS, iconUrl, crawling, crawlingStatus, numTraces, WSEndpoint, WSEndpoint2, WSEndpoint3, relayChain, paraID, ss58Format, RPCBackfill,
             numHolders, totalIssuance,
-            numExtrinsics, numExtrinsics7d, numExtrinsics30d,
-            numSignedExtrinsics, numSignedExtrinsics7d, numSignedExtrinsics30d,
-            numTransfers, numTransfers7d, numTransfers30d,
-            numEvents, numEvents7d, numEvents30d,
-            valueTransfersUSD, valueTransfersUSD7d, valueTransfersUSD30d,
-            numXCMTransferIncoming, numXCMTransferIncoming7d, numXCMTransferIncoming30d,
-            numXCMTransferOutgoing, numXCMTransferOutgoing7d, numXCMTransferOutgoing30d,
-            valXCMTransferIncomingUSD, valXCMTransferIncomingUSD7d, valXCMTransferIncomingUSD30d,
-            valXCMTransferOutgoingUSD, valXCMTransferOutgoingUSD7d, valXCMTransferOutgoingUSD30d,
-            subscanURL, dappURL, githubURL, parachainsURL, isEVM, isWASM from chain where chainID = ${chainID}`)
+            numExtrinsics, 
+            numSignedExtrinsics, 
+            numTransfers,
+            numEvents,
+            numXCMTransferIncoming, 
+            numXCMTransferOutgoing, 
+            features, isEVM, isWASM from chain where chainID = ${chainID}`)
             if (chains.length == 1) {
                 let chainInfo = chains[0]
-                if (chainInfo.isEVM) {
-                    let evmChains = await this.poolREADONLY.query(`select evmChainID,
-                  numTransactionsEVM, numTransactionsEVM7d, numTransactionsEVM30d,
-                  numReceiptsEVM, numReceiptsEVM7d, numReceiptsEVM30d,
-                  floor(gasUsed / (numEVMBlocks+1)) as gasUsed,
-                  floor(gasUsed7d / (numEVMBlocks7d+1)) as gasUsed7d,
-                  floor(gasUsed30d / (numEVMBlocks30d+1)) as gasUsed30d,
-                  floor(gasLimit / (numEVMBlocks+1)) as gasLimit,
-                  floor(gasLimit7d / (numEVMBlocks7d+1)) as gasLimit7d,
-                  floor(gasLimit30d / (numEVMBlocks30d+1)) as gasLimit30d
-                  from chain where chainID = ${chainID} and isEVM = 1`);
-                    if (evmChains.length == 1) {
-                        let evmChainInfo = evmChains[0]
-                        for (const k of Object.keys(evmChainInfo)) {
-                            let v = evmChainInfo[k]
-                            chainInfo[k] = paraTool.dechexToInt(v)
-                        }
-                    }
-                }
-                if (isExternal) {
-                    if (!paraTool.isPublicEndpoint(chainInfo.WSEndpoint)) chainInfo.WSEndpoint = null
-                    if (!paraTool.isPublicEndpoint(chainInfo.WSEndpoint2)) chainInfo.WSEndpoint2 = null
-                    if (!paraTool.isPublicEndpoint(chainInfo.WSEndpoint3)) chainInfo.WSEndpoint3 = null
-                    // hardcoded for publicEndpoint = true for now
-                    chainInfo.chainID = parseInt(chainInfo.chainID)
-                    if ((chainInfo.chainID == 2006 || chainInfo.chainID == 22007) || (chainInfo.chainID == 2004 || chainInfo.chainID == 22023 || chainInfo.chainID == 61000 || chainInfo.chainID == 60888)) {
-                        let id = chainInfo.id;
-                        if (id == "moonbase-alpha") id = "moonbase";
-                        chainInfo.RPCBackfill = `https://${id}-internal.polkaholic.io:8443`
-                        chainInfo.WSEndpoint = `wss://${id}-internal.polkaholic.io`
-                    }
-                }
+		console.log(chainInfo);
                 return chainInfo
             }
         } catch (err) {
@@ -1320,60 +823,40 @@ module.exports = class Query extends AssetManager {
         return false
     }
 
+    getHashes(hash) {
+	return null;
+    }
+    
     async getTransaction(txHash, decorate = true, decorateExtra = ["usd", "address", "related", "data"], isRecursive = true) {
-        //console.log(`getTransaction txHash=${txHash}, decorate=${decorate}, decorateExtra=${decorateExtra}`)
         let [decorateData, decorateAddr, decorateUSD, decorateRelated] = this.getDecorateOption(decorateExtra)
-        //console.log(`getTransaction txHash=${txHash} decorateData=${decorateData} decorateAddr=${decorateAddr} decorateUSD=${decorateUSD} decorateRelated=${decorateRelated}`)
-        const filter = {
-            column: {
-                cellLimit: 1
-            },
-        };
         if (!this.validAddress(txHash)) {
             throw new paraTool.InvalidError(`Invalid Extrinsic Hash: ${txHash}`)
         }
         try {
-            const [row] = await this.btHashes.row(txHash).get({
-                filter
-            });
-            let rowData = row.data;
-            let feedData = false
-            let feedTX = false
-            let feedXCMInfoData = false
+            let row = await this.getHashes(txHash)
+	    if ( row == null ) return;
             let status = ""
+	    let feedData = null;
+	    let feedTX = null;
             let isPending = false
             let isEVMUnfinalized = false
-            if (rowData["feed"]) {
-                feedData = rowData["feed"]
+            if ( row.finalized ) {
+                feedData = row.finalized;
                 status = "finalized"
-            } else if (rowData["feedunfinalized"]) {
-                feedData = rowData["feedunfinalized"]
+            } else if (row.unfinalized ) {
+                feedData = row.unfinalized;
                 status = "unfinalized"
-            } else if (rowData["feedevmunfinalized"]) {
-                feedData = rowData["feedevmunfinalized"]
-                status = "unfinalized"
-                isEVMUnfinalized = true
-            } else if (rowData["feedpending"]) {
-                feedData = rowData["feedpending"]
-                status = "pending"
-                isPending = true
             }
-            if (feedData && feedData["tx"]) {
-                feedTX = feedData["tx"]
+            if (feedData && row.tx ) {
+                feedTX = feed.tx;
             }
-            if (rowData["feedxcminfo"]) {
-                feedXCMInfoData = rowData["feedxcminfo"]
+            if (row.xcminfo) {
+                feedXCMInfoData = row.xcminfo;
                 status = "finalizeddest"
             }
             if (feedTX) {
-                const cell = feedTX[0];
-                let c = JSON.parse(cell.value);
-                //console.log(`getTransaction raw ${txHash}`, c)
-                if (!paraTool.auditHashesTx(c)) {
-                    console.log(`Audit Failed`, txHash)
-                }
-                if (c.transactionHash) {
-                    // this is an EVM tx
+                let c = JSON.parse(feedTX);
+                if (c.transactionHash) {   // this is an EVM tx
                     let assetChain = c.to ? paraTool.makeAssetChain(c.to.toLowerCase(), c.chainID) : null;
                     if (this.assetInfo[assetChain]) {
                         c.assetInfo = this.assetInfo[assetChain];
@@ -1385,26 +868,10 @@ module.exports = class Query extends AssetManager {
                         c.timestamp = cTimestamp
                     }
                     let cFee = (isPending) ? 0 : c.fee
-                    //await this.decorateUSD(c, "value", chainAsset, c.chainID, cTimestamp, decorateUSD)
-                    if (decorateUSD) {
-                        let p = await this.computePriceUSD({
-                            val: c.value,
-                            asset: chainAsset,
-                            chainID: c.chainID,
-                            ts: cTimestamp
-                        });
-                        if (p) {
-                            c.valueUSD = p.valUSD;
-                            c.priceUSD = p.priceUSD;
-                            c.priceUSDCurrent = p.priceUSDCurrent;
-                        }
-                    }
-
                     c.symbol = this.getChainSymbol(c.chainID);
                     if (!isPending && decorateUSD) {
                         c.feeUSD = c.fee * c.priceUSD;
                     }
-
                     c.result = c.status // this is success/fail indicator of the evm tx
                     c.status = status // finalized/unfinalized
 
@@ -1414,11 +881,6 @@ module.exports = class Query extends AssetManager {
                             let t = c.transactionsInternal[i];
                             t.valueRaw = t.value;
                             t.value = t.valueRaw / 10 ** this.getChainDecimal(c.chainID);
-                            if (decorateUSD) {
-                                t.valueUSD = c.priceUSD * t.value;
-                                t.priceUSD = c.priceUSD;
-                                t.priceUSDCurrent = c.priceUSDCurrent;
-                            }
                         }
                     }
                     // decorate transfers
@@ -1433,25 +895,11 @@ module.exports = class Query extends AssetManager {
                                 t.assetInfo = this.assetInfo[tokenAssetChain];
                                 if (t.assetInfo.decimals !== false) {
                                     t.value = t.value / 10 ** t.assetInfo.decimals;
-                                    if (decorateUSD) {
-                                        let p = await this.computePriceUSD({
-                                            val: t.value,
-                                            asset: tokenAsset,
-                                            chainID: c.chainID,
-                                            ts: cTimestamp
-                                        });
-                                        if (p) {
-                                            t.valueUSD = p.valUSD;
-                                            t.priceUSD = p.priceUSD;
-                                            t.priceUSDCurrent = p.priceUSDCurrent;
-                                        }
-                                    }
                                 }
                             }
                         }
                     }
                     let rowDataKeys = Object.keys(rowData)
-                    //console.log(`[${rowDataKeys}] feedXCMInfoData`, feedXCMInfoData, `isRecursive=${isRecursive}, is_evm_xcmtransfer_input=${this.is_evm_xcmtransfer_input(c.input)}, c.substrate(undefined)=${c.substrate != undefined}`)
                     if (c.substrate != undefined && isRecursive) {
                         if (feedXCMInfoData) {
                             for (const extrinsicHashEventID of Object.keys(feedXCMInfoData)) {
@@ -1476,9 +924,7 @@ module.exports = class Query extends AssetManager {
                     return c;
                 }
 
-                //c.params = JSON.stringify(c.params)
                 let d = await this.decorateExtrinsic(c, c.chainID, status, decorate, decorateExtra)
-
                 if (!isPending) {
                     //pending does not have event, fee, specVersion, blockNumber
                     let dEvents = []
@@ -1622,53 +1068,6 @@ module.exports = class Query extends AssetManager {
         return ([]);
     }
 
-    async getAssetPairOHLCV(assetChain, limit = 10000) {
-        try {
-            let [asset, chainID] = paraTool.parseAssetChain(assetChain)
-            let sql = `select indexTS, open, close, low, high, token0Volume, token1Volume, issuance from assetlog where asset = '${asset}' and chainID = '${chainID}' and indexTS >= UNIX_TIMESTAMP(date_sub(Now(), interval 180 day)) order by indexTS desc limit ${limit}`
-            let data = await this.poolREADONLY.query(sql);
-            let parsedAsset = JSON.parse(asset);
-            let parsedToken0 = parsedAsset[0];
-            let parsedToken1 = parsedAsset[1];
-            let token0 = JSON.stringify(parsedAsset[0]);
-            let token1 = JSON.stringify(parsedAsset[1]);
-
-            let ts = this.currentTS();
-            let out = [];
-            for (let i = 0; i < data.length; i++) {
-                let d = data[i];
-                let ts = data[i].indexTS;
-                let volumeUSD = 0;
-                if (d.open < 10000) {
-                    try {
-                        let token0Volume = parseFloat(d.token0Volume);
-                        let token1Volume = parseFloat(d.token1Volume);
-                        let p0 = await this.computePriceUSD({
-                            asset: token0,
-                            chainID,
-                            ts
-                        });
-                        let p1 = await this.computePriceUSD(1.0, {
-                            asset: token1,
-                            chainID
-                        }, ts);
-                        // this is the amount of swap volume
-                        volumeUSD = token0Volume * p0.priceUSD + token1Volume * p1.priceUSD;
-                    } catch (err) {
-                        console.log("computevolumeUSD", token0, token1, err);
-                    }
-                    out.push([d.indexTS * 1000, d.open, d.close, d.low, d.high, volumeUSD]);
-                }
-            }
-            return out;
-        } catch (err) {
-            this.logger.error({
-                "op": "query.getAssetPairOHLCV",
-                assetChain,
-                err
-            });
-        }
-    }
 
     async getAssetHolders(chainID, asset, limit = 1000) {
         let assetChain = paraTool.makeAssetChain(asset, chainID);
@@ -1689,11 +1088,6 @@ module.exports = class Query extends AssetManager {
             console.log("getAssetHolders", sql)
             let holders = await this.poolREADONLY.query(sql);
             let ts = this.currentTS();
-            let p = await this.computePriceUSD({
-                asset,
-                chainID
-            });
-            let priceUSDCurrent = p && p.priceUSDCurrent ? p.priceUSDCurrent : 0
             for (let i = 0; i < holders.length; i++) {
                 holders[i].free = parseFloat(holders[i].free);
                 holders[i].reserved = parseFloat(holders[i].reserved);
@@ -1702,17 +1096,9 @@ module.exports = class Query extends AssetManager {
 
                 // transferable = free - misc_frozen
                 holders[i].transferable = holders[i].free - holders[i].miscFrozen;
-                holders[i].transferableUSD = holders[i].transferable * priceUSDCurrent;
 
                 // balance = free + reserved
                 holders[i].balance = holders[i].free + holders[i].reserved;
-                holders[i].balanceUSD = priceUSDCurrent * holders[i].balance;
-
-                holders[i].reservedUSD = priceUSDCurrent * holders[i].reserved;
-
-                // fee_payable = free - fee_frozen ... but what is "Locked balance" vs "Frozen fee" since "miscFrozen" is always exactly "frozen"?
-                holders[i].miscFrozenUSD = priceUSDCurrent * holders[i].miscFrozen;
-                holders[i].frozenUSD = priceUSDCurrent * holders[i].frozen;
             }
 
             return holders;
@@ -1753,7 +1139,6 @@ module.exports = class Query extends AssetManager {
         }
         return null;
     }
-
 
     getHoldingsState(holdings, asset, chainID) {
         if (!holdings) return (false);
@@ -1796,109 +1181,6 @@ module.exports = class Query extends AssetManager {
         }
         return (assets);
     }
-
-    verificationURL(chainID, router) {
-        switch (chainID) {
-            case 2004:
-                return `https://moonscan.io/address/${router}#readContract`
-            case 22023:
-                return `https://moonriver.moonscan.io/address/${router}#readContract`
-            case 61000:
-                return `https://moonbase.moonscan.io/address/${router}#readContract`
-            case 2006:
-                return `https://blockscout.com/astar/${router}`
-            case 22007:
-                return `https://blockscout.com/shiden/${router}`
-        }
-        return null;
-    }
-    unwrap_verificationPath(verificationPathRaw) {
-        try {
-            let res = {}
-            let vp = JSON.parse(verificationPathRaw);
-            for (const routerAssetChain of Object.keys(vp)) {
-                res.routerAssetChain = routerAssetChain;
-                [res.router, res.chainID] = paraTool.parseAssetChain(res.routerAssetChain);
-                if (res.chainID) {
-                    res.chainName = this.getChainName(res.chainID);
-                    let [__, id] = this.convertChainID(res.chainID)
-                    res.id = id;
-                    let verificationURL = this.verificationURL(res.chainID, res.router);
-                    if (verificationURL) {
-                        res.verificationURL = verificationURL;
-                    }
-                }
-                if (vp[routerAssetChain].path) {
-                    res.path = vp[routerAssetChain].path;
-                    res.pathSymbols = res.path.map((asset) => {
-                        let assetChain = paraTool.makeAssetChain(asset, res.chainID);
-                        let symbol = (this.assetInfo[assetChain]) ? this.assetInfo[assetChain].symbol : "UNK"
-                        return symbol;
-                    });
-                    res.blockNumber = vp[routerAssetChain].blockNumber;
-                }
-                return res;
-            }
-            return (vp);
-        } catch (err) {
-            console.log(err);
-            return null;
-        }
-
-    }
-
-    async getAssetPriceUSDCurrentRouterAsset(asset, chainID) {
-        let sql = `select indexTS, assetpricelog.routerAssetChain, router.routerName, liquid, priceUSD, priceUSD10, priceUSD100, priceUSD1000, convert(verificationPath using utf8) verificationPath from assetpricelog left join router on assetpricelog.routerAssetChain = router.routerAssetChain where assetpricelog.asset = '${asset}' and assetpricelog.chainID = '${chainID}' and indexTS >= unix_timestamp(date_sub(Now(), interval 90 MINUTE)) order by indexTS Desc` // choose
-        let routerChainRecs = await this.poolREADONLY.query(sql)
-        let routerChains = {}
-        if (routerChainRecs.length > 0) {
-            for (const r of routerChainRecs) {
-                if (routerChains[r.routerAssetChain] == undefined || routerChains[r.routerAssetChain].indexTS < r.indexTS) {
-                    routerChains[r.routerAssetChain] = r;
-                }
-            }
-            let routerAssetChains = [];
-            for (const r of Object.keys(routerChains)) {
-                routerAssetChains.push(routerChains[r]);
-            }
-            // sort by liquid
-            routerAssetChains.sort(function(a, b) {
-                return a.liquid - b.liquid
-            });
-            for (const rac of routerAssetChains) {
-                rac.verificationPath = this.unwrap_verificationPath(rac.verificationPath);
-            }
-            return routerAssetChains;
-        }
-        return [];
-    }
-
-    async getSymbolPriceUSDCurrentRouterAsset(symbol, relayChain = null) {
-        let sql = `select indexTS, xcmassetpricelog.routerAssetChain, router.routerName, liquid, priceUSD, priceUSD10, priceUSD100, priceUSD1000, convert(verificationPath using utf8) verificationPath from xcmassetpricelog left join router on xcmassetpricelog.routerAssetChain = router.routerAssetChain where symbol = '${symbol}' and indexTS >= unix_timestamp(date_sub(Now(), interval 90 MINUTE)) order by indexTS Desc` // choose
-        let routerChainRecs = await this.poolREADONLY.query(sql)
-        let routerChains = {}
-        if (routerChainRecs.length > 0) {
-            for (const r of routerChainRecs) {
-                if (routerChains[r.routerAssetChain] == undefined || routerChains[r.routerAssetChain].indexTS < r.indexTS) {
-                    routerChains[r.routerAssetChain] = r;
-                }
-            }
-            let routerAssetChains = [];
-            for (const r of Object.keys(routerChains)) {
-                routerAssetChains.push(routerChains[r]);
-            }
-            // sort by liquid
-            routerAssetChains.sort(function(a, b) {
-                return a.liquid - b.liquid
-            });
-            for (const rac of routerAssetChains) {
-                rac.verificationPath = this.unwrap_verificationPath(rac.verificationPath);
-            }
-            return routerAssetChains;
-        }
-        return [];
-    }
-
     async getSymbolAssets(symbol) {
         let sql = `select xcmasset.*, asset.assetType, asset.assetName, asset.asset, asset.chainID, asset.symbol as localSymbol, asset.chainName, asset.currencyID, numHolders, totalFree, totalReserved, totalMiscFrozen, totalFrozen from xcmasset, asset where xcmasset.xcmInteriorKey = asset.xcmInteriorKey and xcmasset.symbol = '${symbol}' order by numHolders desc;`
         console.log("getSymbolAssets", sql);
@@ -1965,7 +1247,7 @@ module.exports = class Query extends AssetManager {
 
         try {
             let w = (chainID) ? `(chainID = '${chainID}' or chainIDDest = '${chainID}')` : `(status != 'Closed')`
-            let sql = `select chainID, chainIDDest, relayChain, status, msgHashOpenRequest, sentAtOpenRequest, openRequestTS, maxMessageSize, maxCapacity, msgHashAccepted, msgHashAccepted, sentAtAccepted, acceptTS, msgHashClosing, sentAtClosing, closingInitiatorChainID, closingTS, numXCMMessagesOutgoing1d, numXCMMessagesOutgoing7d, numXCMMessagesOutgoing30d, valXCMMessagesOutgoingUSD1d, valXCMMessagesOutgoingUSD7d, valXCMMessagesOutgoingUSD30d, symbols from channel where ${w}`
+            let sql = `select chainID, chainIDDest, relayChain, status, msgHashOpenRequest, sentAtOpenRequest, openRequestTS, maxMessageSize, maxCapacity, msgHashAccepted, msgHashAccepted, sentAtAccepted, acceptTS, msgHashClosing, sentAtClosing, closingInitiatorChainID, closingTS, numXCMMessagesOutgoing1d, valXCMMessagesOutgoingUSD1d, symbols from channel where ${w}`
             let channels = await this.poolREADONLY.query(sql);
             for (let i = 0; i < channels.length; i++) {
                 let c = channels[i];
@@ -2169,36 +1451,38 @@ module.exports = class Query extends AssetManager {
         if (chainID === false) return ([]);
         if (!startBN) startBN = chain.blocksCovered - limit;
         try {
-            let evmflds = (chain.isEVM) ? ", numTransactionsEVM, numTransactionsInternalEVM, gasUsed" : "";
-            let sql = `select blockNumber, if(blockDT is Null, 0, 1) as finalized, blockHash, blockDT, UNIX_TIMESTAMP(blockDT) as blockTS, numExtrinsics, numEvents, numTransfers, numSignedExtrinsics, numXCMTransfersIn, numXCMTransfersOut, numXCMMessagesOut, numXCMMessagesIn, valueTransfersUSD ${evmflds} from block${chainID} where blockNumber > ${startBN} order by blockNumber Desc limit ${limit}`
+	    // blockDT null == unfinalized
+            let sql = `select blockNumber, if(blockDT is Null, 0, 1) as finalized, blockHash, blockDT, UNIX_TIMESTAMP(blockDT) as blockTS, numExtrinsics, numEvents, numTransfers, numSignedExtrinsics, numXCMTransfersIn, numXCMTransfersOut, numXCMMessagesOut, numXCMMessagesIn, numTransactionsEVM, numTransactionsInternalEVM, gasUsed from block${chainID} where blockNumber > ${startBN} order by blockNumber Desc limit ${limit}`
+	    console.log(sql);
             let blocks = await this.poolREADONLY.query(sql);
-            let blocksunfinalized = await this.poolREADONLY.query(`select blockNumber, blockHash, UNIX_TIMESTAMP(blockDT) as blockTS, numExtrinsics, numEvents, numTransfers, numSignedExtrinsics, valueTransfersUSD from blockunfinalized where chainID = ${chainID} and blockNumber >= ${startBN}`);
-            let bufData = {};
-            let bufBlockHashes = {};
-            for (let b = 0; b < blocksunfinalized.length; b++) {
-                let bn = blocksunfinalized[b].blockNumber;
-                if (bufBlockHashes[bn] == undefined) {
-                    bufBlockHashes[bn] = [];
-                }
-                bufBlockHashes[bn].push(blocksunfinalized[b].blockHash);
-                bufData[bn] = blocksunfinalized[b];
-            }
-
+	    let covered = {};
             for (let b = 0; b < blocks.length; b++) {
                 let bn = blocks[b].blockNumber;
-                if ((blocks[b].finalized == 0) && bufBlockHashes[bn] !== undefined) {
-                    blocks[b].blockHash = bufBlockHashes[bn];
-                    if (bufData[bn] !== undefined) {
-                        blocks[b].blockTS = bufData[bn].blockTS;
-                        blocks[b].numExtrinsics = bufData[bn].numExtrinsics;
-                        blocks[b].numEvents = bufData[bn].numEvents;
-                        blocks[b].numTransfers = bufData[bn].numTransfers;
-                        blocks[b].valueTransfersUSD = bufData[bn].valueTransfersUSD;
-                    }
-                }
+		covered[bn] = true;
             }
+	    // push unfinalized blocks that have not been covered
+            let blocksunfinalized = await this.poolREADONLY.query(`select blockNumber, blockHash, UNIX_TIMESTAMP(blockDT) as blockTS, numExtrinsics, numEvents, numTransfers, numSignedExtrinsics, 0 as numTransactionsEVM, 0 as numTransactionsInternalEVM, 0 as gasUsed from blockunfinalized where chainID = ${chainID} and blockNumber >= ${startBN}`);
+            let bufData = {};
+            let bufBlockHashes = {};
+	    let unfblocks = {};
+            for (let b = 0; b < blocksunfinalized.length; b++) {
+                let bn = blocksunfinalized[b].blockNumber;
+                if (covered[bn] == undefined) {
+		    unfblocks[bn] = blocksunfinalized[b];
+		    if ( bufBlockHashes[bn] == undefined )  {
+			bufBlockHashes[bn] = [];
+		    }
+		    bufBlockHashes[bn].push(blocksunfinalized[b].blockHash);
+		}
+	    }
+	    for ( const bn of Object.keys(unfblocks) ) {
+		let unfblock = unfblocks[bn];
+		unfblock.blockHash = bufBlockHashes[bn];
+		blocks.push(unfblocks[bn]);
+	    }
             return (blocks);
         } catch (err) {
+	    console.log(err);
             this.logger.error({
                 "op": "query.getChainRecentBlocks",
                 chainID_or_chainName,
@@ -2209,54 +1493,6 @@ module.exports = class Query extends AssetManager {
         return ([]);
     }
 
-    async decorateBlock(block, chainID, evmBlock = false, decorate = true, decorateExtra = ["data", "address", "usd", "related"]) {
-        let [decorateData, decorateAddr, decorateUSD, decorateRelated] = this.getDecorateOption(decorateExtra)
-        try {
-            let exts = block.extrinsics
-            let decoratedExts = []
-            for (const d of exts) {
-                //let de = await this.decorateBlockExtrinsic(d, chainID, block.blockTS, decorate, decorateExtra)
-                let de = await this.decorateExtrinsic(d, chainID, "", decorate, decorateExtra)
-                decoratedExts.push(de)
-            }
-            block.extrinsics = decoratedExts
-            if (decorate && block.author != undefined) {
-                block.authorAddress = paraTool.getPubKey(block.author)
-                this.decorateAddress(block, "authorAddress", decorateAddr, false)
-            } else if (evmBlock && evmBlock.author != undefined) {
-                block.author = evmBlock.author
-                block.authorAddress = paraTool.getPubKey(evmBlock.author)
-                this.decorateAddress(block, "authorAddress", decorateAddr, false)
-            }
-
-            block.specVersion = this.getSpecVersionForBlockNumber(chainID, block.number);
-            if (evmBlock) {
-                if (evmBlock.transactionsInternal !== undefined && evmBlock.transactionsInternal.length > 0) {
-                    for (let i = 0; i < evmBlock.transactionsInternal.length; i++) {
-                        let t = evmBlock.transactionsInternal[i];
-                        t.valueRaw = t.value;
-                        t.value = t.valueRaw / 10 ** this.getChainDecimal(chainID);
-                        if (decorateUSD) {
-                            /*t.valueUSD = c.priceUSD * t.value;
-                            t.priceUSD = c.priceUSD;
-                            t.priceUSDCurrent = c.priceUSDCurrent;*/
-                        }
-                    }
-                }
-                if (evmBlock.transactionsConnected == undefined) evmBlock.transactionsConnected = []
-                block.evmBlock = evmBlock
-                // decorate transactionsInternal
-            }
-        } catch (err) {
-            this.logger.error({
-                "op": "decorateBlock",
-                chainID,
-                number: block.number,
-                err
-            });
-        }
-        return block
-    }
 
     async decorateTrace(trace, chainID, blockNumber) {
         try {
@@ -2310,27 +1546,58 @@ module.exports = class Query extends AssetManager {
             throw new paraTool.InvalidError(`Invalid blockNumber: ${blockNumber} (tip: ${chain.blocksCovered})`)
         }
         try {
-            let row = await this.fetch_block(chainID, blockNumber, [], true, blockHash);
-            let block = row.feed;
-            if (block) {
-                block = await this.decorateBlock(row.feed, chainID, row.evmFullBlock, decorate, decorateExtra);
 
-                let sql = `select numXCMTransfersIn, numXCMMessagesIn, numXCMTransfersOut, numXCMMessagesOut, valXCMTransferIncomingUSD, valXCMTransferOutgoingUSD from block${chainID} where blockNumber = '${blockNumber}' limit 1`;
-                let blockStatsRecs = await this.poolREADONLY.query(sql);
-                if (blockStatsRecs.length == 1) {
-                    let s = blockStatsRecs[0];
-                    block.numXCMTransfersIn = s.numXCMTransfersIn;
-                    block.numXCMMessagesIn = s.numXCMMessagesIn;
-                    block.numXCMTransfersOut = s.numXCMTransfersOut;
-                    block.numXCMMessagesOut = s.numXCMMessagesOut;
-                    block.valXCMTransferIncomingUSD = s.valXCMTransferIncomingUSD;
-                    block.valXCMTransferOutgoingUSD = s.valXCMTransferOutgoingUSD;
-                }
-                return block;
+            let row = await this.fetch_block(chainID, blockNumber, blockHash);
+            if (row) {
+
+		let block = row.block;
+		let evmBlock = row.evmBlock;
+		console.log("HEYgetBlock", row);
+		let [decorateData, decorateAddr, decorateUSD, decorateRelated] = this.getDecorateOption(decorateExtra)
+		let exts = block.extrinsics
+		let decoratedExts = []
+		for (const d of exts) {
+                    let de = await this.decorateExtrinsic(d, chainID, "", decorate, decorateExtra)
+                    decoratedExts.push(de)
+		}
+		block.extrinsics = decoratedExts
+		if (decorate && block.author != undefined) {
+                    block.authorAddress = paraTool.getPubKey(block.author)
+                    this.decorateAddress(block, "authorAddress", decorateAddr, false)
+		} else if (evmBlock && evmBlock.author != undefined) {
+                    block.author = evmBlock.author
+                    block.authorAddress = paraTool.getPubKey(evmBlock.author)
+                    this.decorateAddress(block, "authorAddress", decorateAddr, false)
+		}
+		
+		block.specVersion = this.getSpecVersionForBlockNumber(chainID, block.number);
+		if (evmBlock) {
+                    if (evmBlock.transactionsInternal !== undefined && evmBlock.transactionsInternal.length > 0) {
+			for (let i = 0; i < evmBlock.transactionsInternal.length; i++) {
+                            let t = evmBlock.transactionsInternal[i];
+                            t.valueRaw = t.value;
+                            t.value = t.valueRaw / 10 ** this.getChainDecimal(chainID);
+			}
+                    }
+                    if (evmBlock.transactionsConnected == undefined) evmBlock.transactionsConnected = []
+                    block.evmBlock = evmBlock
+		    block.blockHashEVM = "TODO";
+		    block.parentHashEVM = evmBlock.header.parentHash;
+		    block.gasUsed = evmBlock.header.gasUsed; // convert from hex LE
+		    block.gasLimit = evmBlock.header.gasLimit;
+		    let fields = ["numTransactionsEVM", "numTransactionsInternalEVM", "numReceiptsEVM", "fees"];
+		    for ( const f of fields ) {
+			block[f] = row[f];
+		    }
+		    // decorate transactionsInternal
+		}
+		return block;
             } else {
                 throw new paraTool.NotFoundError(`Block not indexed yet: ${blockNumber}`)
             }
         } catch (err) {
+	    console.log(5, err);
+
             if (err.code == 404) {
                 throw new paraTool.NotFoundError(`Block not found: ${blockNumber}`)
             }
@@ -2356,89 +1623,14 @@ module.exports = class Query extends AssetManager {
         }
         let traces = [];
         try {
-            const filter = {
-                filter: [{
-                    family: ["finalized", "trace", "autotrace", "n"],
-                    cellLimit: 100
-                }]
-            };
-
-            const tableChain = this.getTableChain(chainID);
-            const [row] = await tableChain.row(paraTool.blockNumberToHex(blockNumber)).get(filter);
-            let rowData = row.data
-            if (rowData) {
-                let nData = rowData.n;
-                let traceType = "unknown";
-                for (const k of Object.keys(nData)) {
-                    if (k == "traceType") {
-                        traceType = nData[k][0].value;
-                        break;
-                    }
-                }
-
-                let finalizedData = rowData.finalized;
-                let finalizedHashes = {};
-                let bh = null;
-                let finalized = false;
-                if (finalizedData) {
-                    for (const k of Object.keys(finalizedData)) {
-                        finalizedHashes[k] = true;
-                        finalized = true;
-                        bh = k;
-                        break;
-                    }
-                }
-                let autoTraceData = rowData.autotrace;
-                let traceData = rowData.trace;
-                if (autoTraceData) {
-                    for (const k of Object.keys(autoTraceData)) {
-                        if (k == "raw" || (bh != null && (finalizedHashes[k] != undefined)) || bh == null) {
-                            let t = JSON.parse(autoTraceData[k][0].value);
-                            let out = {};
-                            if (k == "raw" && bh != null && finalized) {
-                                out.blockHash = bh
-                                out.finalized = true;
-                            } else if (k != "raw" && finalized && (k == bh)) {
-                                out.blockHash = k;
-                                out.finalized = true;
-                            } else if (!finalized && ((blockHash == false) || (blockHash == k))) {
-                                out.blockHash = k;
-                            }
-                            if (out.blockHash != undefined) {
-                                out.traceType = traceType;
-                                out.trace = await this.decorateAutoTrace(t, chainID, blockNumber);
-                                traces.push(out);
-                            }
-                            break;
-                        }
-                    }
-                } else if (traceData) {
-                    for (const k of Object.keys(traceData)) {
-                        if (k == "raw" || (bh != null && (finalizedHashes[k] != undefined)) || bh == null) {
-                            let t = JSON.parse(traceData[k][0].value);
-                            let out = {};
-                            if (k == "raw" && bh != null && finalized) {
-                                out.blockHash = bh
-                                out.finalized = true;
-                            } else if (k != "raw" && finalized && (k == bh)) {
-                                out.blockHash = k;
-                                out.finalized = true;
-                            } else if (!finalized && ((blockHash == false) || (blockHash == k))) {
-                                out.blockHash = k;
-                            }
-                            if (out.blockHash != undefined) {
-                                out.traceType = traceType;
-                                out.trace = await this.decorateTrace(t, chainID, blockNumber);
-                                traces.push(out);
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-
+	    let block = await this.fetch_block(chainID, blockNumber, blockHash);
+            let out = {};
+            out.traceType = "state_traceBlock";
+            out.trace = await this.decorateTrace(block.trace, chainID, blockNumber);
+	    traces.push(out);
             return traces;
         } catch (err) {
+	    console.log(err);
             this.logger.error({
                 "op": "query.getTrace",
                 chainID,
@@ -2633,23 +1825,7 @@ module.exports = class Query extends AssetManager {
                                 c.chainName = this.getChainName(c.chainID)
                                 let cTimestamp = c.timestamp
                                 let chainAsset = this.getChainAsset(c.chainID)
-                                if (decorateUSD) {
-                                    let p = await this.computePriceUSD({
-                                        val: c.value,
-                                        asset: chainAsset,
-                                        chainID: c.chainID,
-                                        ts: cTimestamp
-                                    });
-                                    if (p) {
-                                        c.valueUSD = p.valUSD;
-                                        c.priceUSD = p.priceUSD;
-                                        c.priceUSDCurrent = p.priceUSDCurrent;
-                                        c.symbol = p.symbol;
-                                        c.feeUSD = c.fee * c.priceUSD;
-                                    }
-                                } else {
-                                    c.symbol = this.getChainSymbol(c.chainID);
-                                }
+                                c.symbol = this.getChainSymbol(c.chainID);
                                 c.result = c.status // this is success/fail indicator of the evm tx
                                 // decorate transfers
                                 if (c.transfers !== undefined && c.transfers.length > 0) {
@@ -2665,19 +1841,6 @@ module.exports = class Query extends AssetManager {
                                             t.assetInfo = this.assetInfo[tokenAssetChain];
                                             if (t.assetInfo.decimals !== false) {
                                                 t.value = t.value / 10 ** t.assetInfo.decimals;
-                                                if (decorateUSD) {
-                                                    let p = await this.computePriceUSD({
-                                                        val: t.value,
-                                                        asset: tokenAsset,
-                                                        chainID: c.chainID,
-                                                        ts: cTimestamp
-                                                    });
-                                                    if (p) {
-                                                        t.valueUSD = p.valUSD;
-                                                        t.priceUSD = p.priceUSD;
-                                                        t.priceUSDCurrent = p.priceUSDCurrent;
-                                                    }
-                                                }
                                             }
                                         }
                                     }
@@ -3429,19 +2592,6 @@ module.exports = class Query extends AssetManager {
                                 t['chainID'] = parseInt(t.chainID, 10);
                                 t['chainName'] = this.getChainName(t["chainID"]);
                                 t['asset'] = this.getChainAsset(t["chainID"]);
-                                if (decorateUSD) {
-                                    let p = await this.computePriceUSD({
-                                        val: t['amount'],
-                                        asset: t['asset'],
-                                        chainID: t['chainID'],
-                                        ts: t['ts']
-                                    });
-                                    if (p) {
-                                        t['amountUSD'] = p.valUSD;
-                                        t['priceUSD'] = p.priceUSD;
-                                        t['priceUSDCurrent'] = p.priceUSDCurrent;
-                                    }
-                                }
                                 let relayChain = paraTool.getRelayChainByChainID(parseInt(t['chainID'], 10))
                                 t['chainIDDest'] = paraTool.getChainIDFromParaIDAndRelayChain(parseInt(t['paraID'], 10), relayChain);
 
@@ -3519,19 +2669,6 @@ module.exports = class Query extends AssetManager {
                                 let [__, id] = this.convertChainID(t.chainID);
                                 t['id'] = id
                                 t['asset'] = this.getChainAsset(t["chainID"]);
-                                if (decorateUSD) {
-                                    let p = await this.computePriceUSD({
-                                        val: t['amount'],
-                                        asset: t['asset'],
-                                        chainID: t['chainID'],
-                                        ts: t['ts']
-                                    });
-                                    if (p) {
-                                        t['amountUSD'] = p.valUSD;
-                                        t['priceUSD'] = p.priceUSD;
-                                        t['priceUSDCurrent'] = p.priceUSDCurrent;
-                                    }
-                                }
                                 if (TSStart && (t['ts'] == TSStart) && (p < pageIndex)) {
                                     console.log("SKIPPING (p<pageIndex)", "ts", ts, "ts0", t['ts'], "p", p, "pageIndex", pageIndex)
                                     // skip this until hitting pageIndex
@@ -3781,10 +2918,6 @@ module.exports = class Query extends AssetManager {
             if (extraRecs.length == 1) {
                 console.log("getAddressContract XCCONTRACT UNAMBIGUOUS", extraRecs.length, sql);
                 let e = extraRecs[0];
-                var p = await this.computePriceUSD({
-                    asset: e.asset,
-                    chainID: e.chainID
-                });
                 contract = {};
                 contract.assetName = e.assetName;
                 contract.symbol = e.symbol;
@@ -3795,7 +2928,6 @@ module.exports = class Query extends AssetManager {
                 contract.assetType = e.assetType;
                 contract.chainName = chainName;
                 contract.localSymbol = e.localSymbol;
-                if (p) contract.priceUSD = p.priceUSDCurrent;
                 contract.totalSupply = e.totalSupply;
                 contract.numHolders = e.numHolders;
                 contract.decimals = e.decimals;
@@ -3840,10 +2972,6 @@ module.exports = class Query extends AssetManager {
                 console.log("getAddressContract UNAMBIGUOUS SINGLE CHAIN", sql);
                 let e = extraRecs[0];
                 contract = e
-                var p = await this.computePriceUSD({
-                    asset: e.asset,
-                    chainID: e.chainID
-                });
                 contract.chainID = e.chainID;
                 let [__, id] = this.convertChainID(e.chainID)
                 let chainName = this.getChainName(e.chainID);
@@ -3856,7 +2984,7 @@ module.exports = class Query extends AssetManager {
                 } else {
                     contract.localSymbol = e.localSymbol;
                 }
-                if (p) contract.priceUSD = p.priceUSDCurrent;
+
             } else if (extraRecs.length > 1) {
                 console.log("getAddressContract AMBIGUOUS MULTI CHAIN", sql);
                 contract = [];
@@ -4443,7 +3571,7 @@ module.exports = class Query extends AssetManager {
         if (typeof chainID == "string") {
             chainID = parseInt(chainID, 10);
         }
-        //console.log(`decorateExtrinsic [${ext.extrinsicID}] decorateData=${decorateData} decorateAddr=${decorateAddr} decorateUSD=${decorateUSD} decorateRelated=${decorateRelated}`)
+
         let decoratedExt = {
             chainID: chainID,
             id: null,
@@ -4491,12 +3619,12 @@ module.exports = class Query extends AssetManager {
             if (ext.transfers) {
                 decoratedExt.transfers = ext.transfers
             }
-            //console.log(`decoratedExt before fee [decorate=${decorate}, decorateUSD=${decorateUSD}]`, decoratedExt)
+
             if (ext.fee > 0) {
                 await this.decorateFee(decoratedExt, decoratedExt.chainID, decorateUSD)
             }
             decoratedExt.result = ext.result
-            //console.log(`decoratedExt after fee [decorate=${decorate}, decorateUSD=${decorateUSD}]`, decoratedExt)
+
             if (ext.err != undefined) decoratedExt.err = ext.err
             if (status != "") decoratedExt.status = status;
             if (ext.genTS) decoratedExt.genTS = decoratedExt.genTS
@@ -4523,7 +3651,7 @@ module.exports = class Query extends AssetManager {
                     }
                 }
             }
-            //console.log(`decoratedExt after decorateEventModule [decorate=${decorate}, decorateUSD=${decorateUSD}]`, decoratedExt)
+
             if (ext.params != undefined && decorate) {
                 await this.decorateParams(section, method, ext.params, chainID, ext.ts, 0, decorate, decorateData)
 
@@ -4550,7 +3678,6 @@ module.exports = class Query extends AssetManager {
                 }
 
             }
-            //console.log(`decoratedExt after decorateParams [decorate=${decorate}, decorateUSD=${decorateUSD}]`, decoratedExt)
         } catch (err) {
             console.log(`decorateExtrinsic err`, err.toString())
             this.logger.error({
@@ -4574,19 +3701,6 @@ module.exports = class Query extends AssetManager {
             var tip = (extrinsic.tip != undefined) ? (extrinsic.tip) : 0
             var targetAsset = `{"Token":"${chainSymbol}"}`
             extrinsic.chainSymbol = chainSymbol
-            if (decorateUSD) {
-                let p = await this.computePriceUSD({
-                    asset: targetAsset,
-                    chainID,
-                    ts: extrinsic.ts
-                });
-                if (p) {
-                    extrinsic.priceUSD = p.priceUSD
-                    extrinsic.feeUSD = fee * p.priceUSD
-                    extrinsic.tipUSD = tip * p.priceUSD
-                    extrinsic.priceUSDCurrent = p.priceUSDCurrent
-                }
-            }
         } catch (err) {
             this.logger.error({
                 "op": "query.decorateFee",
@@ -4668,24 +3782,8 @@ module.exports = class Query extends AssetManager {
                     } else if (paraTool.isInt(bal)) {
                         bal = bal / 10 ** chainDecimals // always get here
                     }
-                    if (decorateUSD) {
-                        let p = await this.computePriceUSD({
-                            val: bal,
-                            asset: targetAsset,
-                            chainID,
-                            ts
-                        })
-                        decodedData[idx].symbol = chainSymbol
-                        decodedData[idx].dataRaw = bal
-                        if (p) {
-                            decodedData[idx].dataUSD = p.valUSD
-                            decodedData[idx].priceUSD = p.priceUSD
-                            decodedData[idx].priceUSDCurrent = p.priceUSDCurrent
-                        }
-                    } else {
-                        decodedData[idx].symbol = chainSymbol
-                        decodedData[idx].dataRaw = bal
-                    }
+                    decodedData[idx].symbol = chainSymbol
+                    decodedData[idx].dataRaw = bal
                 }
                 break;
 
@@ -4704,25 +3802,8 @@ module.exports = class Query extends AssetManager {
                 } else if (paraTool.isInt(bal)) {
                     bal = bal / 10 ** chainDecimals // always get here
                 }
-                if (decorateUSD) {
-                    var p = await this.computePriceUSD({
-                        val: bal,
-                        asset: targetAsset,
-                        chainID,
-                        ts
-                    })
-                    decodedData[2].symbol = chainSymbol
-                    decodedData[2].dataRaw = bal
-                    if (p) {
-                        decodedData[2].dataUSD = p.valUSD
-                        decodedData[2].priceUSD = p.priceUSD
-                        decodedData[2].priceUSDCurrent = p.priceUSDCurrent
-                    }
-                } else {
-                    decodedData[2].symbol = chainSymbol
-                    decodedData[2].dataRaw = bal
-                }
-
+                decodedData[2].symbol = chainSymbol
+                decodedData[2].dataRaw = bal
             }
             break;
 
@@ -4742,24 +3823,8 @@ module.exports = class Query extends AssetManager {
                     bal = bal / 10 ** chainDecimals // always get here
                 }
 
-                if (decorateUSD) {
-                    let p = await this.computePriceUSD({
-                        val: bal,
-                        asset: targetAsset,
-                        chainID,
-                        ts
-                    })
-                    decodedData[2].symbol = chainSymbol
-                    decodedData[2].dataRaw = bal
-                    if (p) {
-                        decodedData[2].dataUSD = p.valUSD
-                        decodedData[2].priceUSD = p.priceUSD
-                        decodedData[2].priceUSDCurrent = p.priceUSDCurrent
-                    }
-                } else {
-                    decodedData[idx].symbol = chainSymbol
-                    decodedData[idx].dataRaw = bal
-                }
+                decodedData[idx].symbol = chainSymbol
+                decodedData[idx].dataRaw = bal
             }
             break;
         }
@@ -4787,22 +3852,6 @@ module.exports = class Query extends AssetManager {
             symbol: aseetSymbol,
             dataRaw: bal,
         }
-
-        if (decorateUSD) {
-            var targetAsset = feedtransfer.asset
-            let p = await this.computePriceUSD({
-                val: bal,
-                asset: targetAsset,
-                chainID,
-                ts: feedtransfer.ts
-            })
-            if (p) {
-                res.dataUSD = p.valUSD
-                res.priceUSD = p.priceUSD
-                res.priceUSDCurrent = p.priceUSDCurrent
-            }
-        }
-
 
         let dFeedtransfer = {
             chainID: feedtransfer.chainID,
@@ -4839,7 +3888,7 @@ module.exports = class Query extends AssetManager {
 
         dFeedtransfer.rawAsset = feedtransfer.rawAsset
         dFeedtransfer.rawAmount = feedtransfer.rawAmount
-        if (decorateUSD) dFeedtransfer.amountUSD = (feedtransfer.amountUSD != undefined) ? feedtransfer.amountUSD : 0
+
         dFeedtransfer.decimals = (feedtransfer.decimals != undefined) ? feedtransfer.decimals : null // unknown case
         dFeedtransfer.data = feedtransfer.data
         if (decorateData) dFeedtransfer.decodedData = res
@@ -4870,20 +3919,6 @@ module.exports = class Query extends AssetManager {
             dFeedtransfer.decimals = assetInfo.decimals;
             dFeedtransfer.value = dFeedtransfer.valueRaw / 10 ** assetInfo.decimals;
             dFeedtransfer.symbol = assetInfo.symbol;
-            if (decorateUSD) {
-                let p = await this.computePriceUSD({
-                    val: dFeedtransfer.value,
-                    asset,
-                    chainID,
-                    ts: feedtransfer.ts
-                })
-                if (p) {
-                    dFeedtransfer.valueUSD = p.valUSD
-                    dFeedtransfer.priceUSD = p.priceUSD
-                    dFeedtransfer.priceUSDCurrent = p.priceUSDCurrent
-                }
-            }
-            console.log("DECORATE", decorateUSD, asset, dFeedtransfer);
         } else {
             console.log("MISSING", assetChain, feedtransfer.tokenAddress.toLowerCase(), chainID);
         }
@@ -5041,322 +4076,6 @@ module.exports = class Query extends AssetManager {
         return out;
     }
 
-    async getExtrinsics(query = {}, limit = 1000, decorate = true, decorateExtra = true) {
-        return this.bq_query("extrinsics", query, limit, decorate, decorateExtra);
-    }
-
-    async getTransfers(query = {}, limit = 1000, decorate = true, decorateExtra = true) {
-        return this.bq_query("transfers", query, limit, decorate, decorateExtra);
-    }
-
-    async getEvents(query = {}, limit = 1000, decorate = true, decorateExtra = true) {
-        return this.bq_query("events", query, limit, decorate, decorateExtra);
-    }
-
-    async getEVMTxs(query = {}, limit = 1000, decorate = true, decorateExtra = true) {
-        return this.bq_query_evmtxs("evmtxs", query, limit, decorate, decorateExtra);
-    }
-
-    async bq_query(tbl = "extrinsics", filters = {}, limit = 1000, decorate = true, decorateExtra = ["data", "address", "usd", "related"]) {
-
-        let [decorateData, decorateAddr, decorateUSD, decorateRelated] = this.getDecorateOption(decorateExtra)
-
-        const bigqueryClient = new BigQuery();
-        let fullTable = this.getBQTable(tbl);
-
-        let flds = "c as chainID, bn as blockNumber, id as eventID, h as extrinsicHash, p as section, m as method, UNIX_SECONDS(ts) as blockTS";
-        let fldsmysql = "";
-        if (tbl == "extrinsics") {
-            flds = "c as chainID, bn as blockNumber, id as extrinsicID, h as extrinsicHash, p as section, m as method, f as fromAddress, UNIX_SECONDS(ts) as blockTS, r as result";
-            fldsmysql = "chainID, blockNumber, extrinsicID, extrinsicHash, section, method, fromAddress, ts as blockTS, result"
-        } else if (tbl == "transfers") {
-            flds = "c as chainID, bn as blockNumber, id as extrinsicID, h as extrinsicHash, p as section, m as method, f as fromAddress, t as toAddress, asset, symbol, priceUSD, a as amount, v as amountUSD, UNIX_SECONDS(ts) as blockTS";
-            fldsmysql = "chainID, blockNumber, extrinsicID, extrinsicHash, section, method, fromAddress, toAddress, asset, symbol, priceUSD, amount, amountUSD, ts as blockTS"
-        }
-        let w = [];
-        let wr = [];
-        let recent = (tbl == "extrinsics" || tbl == "transfers"); // TODO: if date filter is used, set recent = false
-        for (const filt of Object.keys(filters)) {
-            let v = filters[filt]
-            switch (filt.toLowerCase()) {
-                case "blocknumberstart":
-                case "blockstart":
-                case "startblock":
-                    w.push(`bn >= ${v}`);
-                    if (recent) wr.push(`blockNumber >= '${v}'`)
-                    break;
-                case "endblock":
-                case "blockend":
-                case "blocknumberend":
-                    w.push(`bn <= ${v}`);
-                    if (recent) wr.push(`blockNumber <= '${v}'`)
-                    break;
-                case "section":
-                    w.push(`lower(p) = lower('${v}')`);
-                    if (recent) wr.push(`LOWER(section) = LOWER('${v}')`)
-                    break;
-                case "method":
-                    w.push(`lower(m) = lower('${v}')`);
-                    if (recent) wr.push(`LOWER(method) = LOWER('${v}')`)
-                    break;
-                case "fromaddress":
-                    let fromAddress = paraTool.getPubKey(v);
-                    w.push(`f = '${fromAddress}'`);
-                    if (recent) wr.push(`fromAddress = '${v}'`)
-                    break;
-                case "symbol": // transfers only
-                    if (tbl == "transfers") {
-                        w.push(`symbol = '${v}'`);
-                        if (recent) wr.push(`symbol = '${v}'`)
-                    }
-                    break;
-                case "toaddress": // transfers only
-                    if (tbl == "transfers") {
-                        let toAddress = paraTool.getPubKey(v);
-                        w.push(`t = '${toAddress}'`);
-                        if (recent) wr.push(`toAddress = '${v}'`)
-                    }
-                    break;
-                case "symbol": // transfers only
-                    if (tbl == "transfers") w.push(`symbol = '${symbol}'`);
-                    break;
-                case "toaddress": // transfers only
-                    let toAddress = paraTool.getPubKey(v);
-                    w.push(`t = '${toAddress}'`);
-                    break;
-                case "datestart":
-                case "startdate":
-                    w.push(`Date(ts) >= '${v}'`);
-                    if (recent) wr.push(`logDT >= '${v}'`)
-                    break;
-                case "dateend":
-                case "enddate":
-                    w.push(`Date(ts) <= '${v}'`);
-                    if (recent) wr.push(`logDT <= '${v}'`)
-                    break;
-                case "result":
-                    if (tbl == "extrinsics") {
-                        w.push(`r = ${v}`);
-                        if (recent) wr.push(`result = '${v}'`)
-                    }
-                    break;
-                case "signed":
-                    if (tbl == "extrinsics") {
-                        w.push(`s = ${v}`);
-                        if (recent) wr.push(`signed = '${v}'`)
-                    }
-                    break;
-                case "chainid":
-                case "chainidentifier":
-                    let [chainID, id] = this.convertChainID(v)
-                    if (chainID !== false) {
-                        w.push(`c = ${chainID}`);
-                        if (recent) wr.push(`chainID = ${chainID}`)
-                    } else {
-                        throw new Error(`invalid chainIdentifier: ${v}`);
-                    }
-                    break;
-                default:
-                    throw new Error(`invalid filter: ${filt}`);
-            }
-        }
-        let sqlQuery = ``;
-        if (w.length == 0) w.push(`ts > 0`)
-        if (w.length > 0) {
-            sqlQuery = `SELECT ${flds} FROM ${fullTable} WHERE ` + w.join(" and ") + ` ORDER By ts desc LIMIT ${limit}`;
-        }
-
-        const options = {
-            query: sqlQuery,
-            // Location must match that of the dataset(s) referenced in the query.
-            location: 'US',
-        };
-
-        try {
-            let rows = null;
-            if (limit <= 1000) {
-                // typical  "simple" case: Add rows from bigquery
-                [rows] = await bigqueryClient.query(options);
-            } else {
-                // Run the query as a job
-                const [job] = await bigqueryClient.createQueryJob(options);
-                await job.getQueryResults();
-                [rows] = await job.getQueryResults();
-            }
-            let keys = {}
-            if (recent) {
-                for (let i = 0; i < rows.length; i++) {
-                    if ((tbl == "extrinsics") || (tbl == "transfers")) {
-                        let r = rows[i];
-                        keys[r.extrinsicID] = true;
-                        if (r.ts != undefined && r.ts.value != undefined) {
-                            r.ts = r.ts.value;
-                        }
-                    }
-                }
-            }
-            // Add rows from mysql "recent" table
-            let numRecents = 0;
-            if (recent && fldsmysql.length > 0) {
-                let mysqlQuery = `SELECT ${fldsmysql} FROM ${tbl}recent WHERE ` + wr.join(" and ") + ` LIMIT ${limit}`;
-                let recs = await this.poolREADONLY.query(mysqlQuery);
-                for (let i = 0; i < recs.length; i++) {
-                    let r = recs[i];
-                    if (tbl == "extrinsics" && keys[r.extrinsicID] !== undefined) {
-
-                    } else if (tbl == "transfers" && keys[r.extrinsicID] !== undefined) {
-
-                    } else {
-                        numRecents++;
-                        rows.push(r);
-                    }
-                }
-            }
-            // for both datasets, augment chainName, ts,
-            for (let i = 0; i < rows.length; i++) {
-                let r = rows[i];
-                if (r.chainName == undefined && r.chainID != undefined) {
-                    r.chainName = this.getChainName(r.chainID);
-                }
-                if (decorate) {
-                    if (r.fromAddress != undefined) {
-                        this.decorateAddress(r, "fromAddress", decorateAddr, decorateRelated);
-                    }
-                    if (r.toAddress != undefined) {
-                        this.decorateAddress(r, "toAddress", decorateAddr, decorateRelated);
-                    }
-                }
-                if (rows.length > limit) {
-                    rows = rows.slice(0, limit); // CHECK
-                }
-
-                // sort by ts descending, if we had recent recs
-                if (numRecents > 0) {
-
-                    rows.sort(function(a, b) {
-                        let bTS = (b.blockTS !== undefined) ? b.blockTS : 0;
-                        let aTS = (a.blockTS !== undefined) ? a.blockTS : 0;
-                        return (bTS - aTS);
-                    })
-                }
-            }
-            return (rows);
-        } catch (err) {
-            this.logger.error({
-                "op": "query.bq_query",
-                err,
-                sqlQuery,
-                filters
-            });
-            throw new Error(`An error has occurred.`);
-        }
-    }
-
-    async bq_query_evmtxs(tbl = "evmtxs", filters = {}, limit = 100, decorate = true, decorateExtra = ["data", "address", "usd", "related"]) {
-
-        let [decorateData, decorateAddr, decorateUSD, decorateRelated] = this.getDecorateOption(decorateExtra)
-
-        const bigqueryClient = new BigQuery();
-        let fullTable = this.getBQTable(tbl);
-
-        let flds = "c as chainID, bn as blockNumber, h as transactionHash, s as method, m as methodID, UNIX_SECONDS(ts) as blockTS, r as result, f as fromAddress, t as toAddress, substrate, cr as creates";
-
-        let w = [];
-        for (const filt of Object.keys(filters)) {
-            let v = filters[filt]
-            switch (filt.toLowerCase()) {
-                case "blocknumberstart":
-                case "blockstart":
-                case "startblock":
-                    w.push(`bn >= ${v}`);
-                    break;
-                case "endblock":
-                case "blockend":
-                case "blocknumberend":
-                    w.push(`bn <= ${v}`);
-                    break;
-                case "method": // label is "Method"
-                    v = v.toLowerCase()
-                    w.push(`lower(s) like '%${v}%'`);
-                    break;
-                case "methodid":
-                    w.push(`lower(m) = lower('${v}')`);
-                    break;
-                case "fromaddress":
-                    let fromAddress = v.toLowerCase();
-                    w.push(`lower(f) = '${fromAddress}'`);
-                    break;
-                case "toaddress":
-                    let toAddress = v.toLowerCase();
-                    w.push(`lower(t) = '${toAddress}'`);
-                    break;
-                case "creates":
-                    let creates = parseInt(v);
-                    if (creates > 0) {
-                        w.push(`cr is Not Null`);
-                    } else {
-                        w.push(`cr is Null`);
-                    }
-                    break;
-                case "datestart":
-                case "startdate":
-                    w.push(`Date(ts) >= '${v}'`);
-                    break;
-                case "dateend":
-                case "enddate":
-                    w.push(`Date(ts) <= '${v}'`);
-                    break;
-                case "result":
-                    w.push(`r = ${v}`);
-                    break;
-                case "chainid":
-                case "chainidentifier":
-                    let [chainID, id] = this.convertChainID(v)
-                    if (chainID !== false) {
-                        w.push(`c = ${chainID}`);
-                    } else {
-                        throw new Error(`invalid chainIdentifier: ${v}`);
-                    }
-                    break;
-                default:
-                    throw new Error(`invalid filter: ${filt}`);
-            }
-        }
-        let sqlQuery = ``;
-        if (w.length > 0) {
-            sqlQuery = `SELECT ${flds}
-       FROM ${fullTable}
-       WHERE ` + w.join(" and ") + `
-       ORDER By ts desc LIMIT ${limit}`;
-        }
-        const options = {
-            query: sqlQuery,
-            // Location must match that of the dataset(s) referenced in the query.
-            location: 'US',
-        };
-
-        try {
-            // Run the query
-            const [rows] = await bigqueryClient.query(options);
-            for (let i = 0; i < rows.length; i++) {
-                let r = rows[i];
-                if (decorate) {
-                    if (r.fromAddress != null) {
-                        this.decorateAddress(r, "fromAddress", decorateAddr, decorateRelated)
-                    }
-                }
-            }
-            return (rows);
-        } catch (err) {
-            this.logger.error({
-                "op": "query.bq_query",
-                err,
-                filters
-            });
-            throw new Error("An error has occurred.")
-        }
-
-    }
 
     async getRecentXCMMessages(filters, limit, decorate, decorateExtra) {
         let chainList = (filters.chainList != undefined) ? filters.chainList : [];
@@ -5439,211 +4158,6 @@ module.exports = class Query extends AssetManager {
         return this.bq_query_xcmmessages("xcm", query, limit, decorate, decorateExtra);
     }
 
-    // TODO: reenable usage
-    async bq_query_xcmmessages(tbl = "xcm", filters = {}, limit = 100) {
-        const bigqueryClient = new BigQuery();
-        let fullTable = this.getBQTable(tbl);
-
-        let flds = "id as xcmID, d as chainID, c as chainIDDest, t as msgType, h as msgHash, b as msgHex, s as msgStr, UNIX_SECONDS(ts) as ts, bn as blockNumber, if ((c!=2 and c<10000), 'polkadot', 'kusama') as relayChain, sn as sentAt"
-        let fldsmysql = "xcmID, chainID, chainIDDest, msgType, msgHash, msgHex, msgStr, blockTS as ts, blockNumber, relayChain, sentAt"
-
-        let w = [];
-        let wr = [];
-
-        for (const filt of Object.keys(filters)) {
-            let v = filters[filt]
-            switch (filt.toLowerCase()) {
-                case "blocknumberstart":
-                case "blockstart":
-                case "startblock":
-                    w.push(`bn >= ${v}`);
-                    wr.push(`blockNumber >= '${v}'`)
-                    break;
-                case "endblock":
-                case "blockend":
-                case "blocknumberend":
-                    w.push(`bn <= ${v}`);
-                    wr.push(`blockNumber <= '${v}'`)
-                    break;
-                case "msgtype":
-                    w.push(`t = '${v}'`);
-                    wr.push(`msgType = '${v}'`)
-                    break;
-                case "relaychain":
-                    //TODO: need to write xcm.rc for  this to work
-                    //w.push(`rc = '${v}'`);
-                    //TODO..
-                    if (v.toLowerCase() == 'polkadot') {
-                        w.push(`(c!=2 and c<10000)`);
-                        wr.push(`relayChain = 'polkadot'`)
-                    }
-                    if (v.toLowerCase() == 'kusama') {
-                        w.push(`(c=2 or (c>=20000 and c<30000))`);
-                        wr.push(`relayChain = 'kusama'`)
-                    }
-                    if (v.toLowerCase() == 'moonbase-relay') {
-                        w.push(`(c=60000 or (c>=60000 and c<70000))`);
-                        wr.push(`relayChain = 'moonbase-relay'`)
-                    }
-                    break;
-                case "datestart":
-                case "startdate":
-                    w.push(`_PARTITIONDATE >= '${v}'`);
-                    wr.push(`date(from_unixtime(blockTS)) >= '${v}'`)
-                    break;
-                case "dateend":
-                case "enddate":
-                    w.push(`_PARTITIONDATE <= '${v}'`);
-                    wr.push(`date(from_unixtime(blockTS)) <= '${v}'`)
-                    break;
-                case "chainid":
-                case "chainidentifier":
-                    let [chainID, id] = this.convertChainID(v)
-                    if (chainID !== false) {
-                        w.push(`d = ${chainID}`);
-                        wr.push(`chainID = '${chainID}'`)
-                    } else {
-                        throw new Error(`invalid chainIdentifier: ${v}`);
-                    }
-                    break;
-                case "chainiddest":
-                case "chainidentifierdest":
-                    let [chainIDDest, id2] = this.convertChainID(v)
-                    if (chainIDDest !== false) {
-                        w.push(`c = ${chainIDDest}`);
-                        wr.push(`chainIDDest = '${chainIDDest}'`)
-                    } else {
-                        throw new Error(`invalid chainIdentifierDest: ${v}`);
-                    }
-                    break;
-
-                default:
-                    throw new Error(`XCM Messages invalid filter: ${filt}`);
-            }
-        }
-        let sqlQuery = ``;
-        if (w.length > 0) {
-            sqlQuery = `SELECT ${flds}
-           FROM ${fullTable}
-           WHERE ` + w.join(" and ") + `
-           ORDER By ts desc LIMIT ${limit}`;
-        }
-
-        const options = {
-            query: sqlQuery,
-            // Location must match that of the dataset(s) referenced in the query.
-            location: 'US',
-        };
-
-        try {
-            // Run the query
-            const [rows] = await bigqueryClient.query(options);
-            var results = []
-            /*
-            {
-              "xcmID": "1334065-1-dmp-2000-0-0",
-              "chainID": 0,
-              "id": "polkadot",
-              "chainName": "Polkadot",
-              "chainIDDest": 2000,
-              "idDest": "acala",
-              "chainDestName": "Acala",
-              "msgType": "dmp",
-              "msgHash": "a6fd9ca31c18b44d64cdfed29c90eebeb89548f294cf2389ca76e56b79f4f367",
-              "msgHex": "0x02100104000100000700e87648170a13000100000700e8764817010300286bee0d010004000101006642ee28fc1b7d1a01ea2bc956bfe5fde1c7121cae33afe51a83cc683785a81f",
-              "msgStr": "{\"v2\":[{\"reserveAssetDeposited\":[{\"id\":{\"concrete\":{\"parents\":1,\"interior\":{\"here\":null}}},\"fun\":{\"fungible\":100000000000}}]},{\"clearOrigin\":null},{\"buyExecution\":{\"fees\":{\"id\":{\"concrete\":{\"parents\":1,\"interior\":{\"here\":null}}},\"fun\":{\"fungible\":100000000000}},\"weightLimit\":{\"limited\":4000000000}}},{\"depositAsset\":{\"assets\":{\"wild\":{\"all\":null}},\"maxAssets\":1,\"beneficiary\":{\"parents\":0,\"interior\":{\"x1\":{\"accountId32\":{\"network\":{\"any\":null},\"id\":\"0x6642ee28fc1b7d1a01ea2bc956bfe5fde1c7121cae33afe51a83cc683785a81f\"}}}}}}]}",
-              "ts": 1656594360,
-              "blockNumber": 1334065,
-              "relayChain": "Polkadot",
-              "sentAt": 10962759
-            }
-            */
-            let keys = {};
-            for (let i = 0; i < rows.length; i++) {
-                let r = rows[i];
-                let currXcmID = r.xcmID
-                let chainID = r.chainID;
-                let chainIDDest = r.chainIDDest;
-                let msgHash = (r.msgHash.substr(0, 2) != "0x") ? '0x' + r.msgHash : r.msgHash
-
-                if (keys[currXcmID] !== undefined) continue // remove duplicate here
-                let parsedMsg = null;
-                try {
-                    parsedMsg = JSON.parse(r.msgStr)
-                } catch (e) {
-                    parsedMsg = {}
-                }
-                let [_chainID, id] = this.convertChainID(chainID)
-                let [_chainIDDest, idDest] = this.convertChainID(chainIDDest)
-                let x = {
-                    xcmID: currXcmID,
-                    chainID: chainID,
-                    id: id,
-                    chainName: this.getChainName(chainID),
-                    chainIDDest: chainIDDest,
-                    idDest: idDest,
-                    chainDestName: this.getChainName(chainIDDest),
-                    msgType: r.msgType,
-                    msgHash: msgHash,
-                    msgHex: `${r.msgHex}`,
-                    //msgStr: r.msgStr,
-                    msgDecoded: parsedMsg,
-                    blockNumber: r.blockNumber,
-                    relayChain: r.relayChain,
-                    sentAt: r.sentAt,
-                    ts: r.ts,
-                }
-                if (r.ts != undefined && r.ts.value != undefined) {
-                    x.ts = r.ts.value;
-                }
-                if (r.chainID != undefined && r.chainIDDest != undefined) {
-                    keys[currXcmID] = true;
-                    results.push(x)
-                }
-            }
-
-            // Add rows from mysql "recent" table
-            let numRecents = 0;
-            if (fldsmysql.length > 0) {
-                let mysqlQuery = `SELECT ${fldsmysql} FROM xcmmessages WHERE ` + wr.join(" and ") + ` LIMIT ${limit}`;
-                let recs = await this.poolREADONLY.query(mysqlQuery);
-                for (let i = 0; i < recs.length; i++) {
-                    let r = recs[i];
-                    if (keys[r.xcmID] !== undefined) {
-
-                    } else {
-                        keys[r.xcmID] = true
-                        let chainID = r.chainID;
-                        let chainIDDest = r.chainIDDest;
-                        let parsedMsg = {};
-                        try {
-                            parsedMsg = JSON.parse(r.msgStr)
-                        } catch (e) {
-
-                        }
-                        let [_chainID, id] = this.convertChainID(chainID)
-                        let [_chainIDDest, idDest] = this.convertChainID(chainIDDest)
-                        r.id = id
-                        r.msgDecoded = parsedMsg;
-                        r.idDest = idDest
-                        r.chainName = this.getChainName(chainID);
-                        r.chainDestName = this.getChainName(chainIDDest);
-                        numRecents++;
-                        results.push(r);
-                    }
-                }
-            }
-            return (results);
-        } catch (err) {
-            this.logger.error({
-                "op": "query.bq_query",
-                err,
-                filters
-            });
-            throw new Error("An error has occurred.")
-        }
-
-    }
 
     async getSpecVersionMetadata(chainID_or_chainName, specVersion) {
         let [chainID, id] = this.convertChainID(chainID_or_chainName)
@@ -5696,7 +4210,7 @@ module.exports = class Query extends AssetManager {
             throw new paraTool.InvalidError(`Invalid chain: ${chainID_or_chainName}`)
         }
         try {
-            var sql = `select logDT, UNIX_TIMESTAMP(logDT) as logTS, numExtrinsics, numEvents, numTransfers, numSignedExtrinsics, valueTransfersUSD, numTransactionsEVM, numAccountsActive, numAddresses, fees, numXCMTransfersIn, numXCMMessagesIn, numXCMTransfersOut, numXCMMessagesOut, valXCMTransferIncomingUSD, valXCMTransferOutgoingUSD from blocklog where chainID = '${chainID}' and logDT >= date_sub(Now(), interval ${lookback} DAY) order by logDT desc`;
+            var sql = `select logDT, UNIX_TIMESTAMP(logDT) as logTS, numExtrinsics, numEvents, numTransfers, numSignedExtrinsics, numTransactionsEVM, numAccountsActive, numAddresses, fees, numXCMTransfersIn, numXCMMessagesIn, numXCMTransfersOut, numXCMMessagesOut from blocklog where chainID = '${chainID}' and logDT >= date_sub(Now(), interval ${lookback} DAY) order by logDT desc`;
             let recs = await this.poolREADONLY.query(sql);
             for (let i = 0; i < recs.length; i++) {
                 let [logDT, _] = paraTool.ts_to_logDT_hr(recs[i].logTS);
@@ -5729,43 +4243,6 @@ module.exports = class Query extends AssetManager {
 
         }
         return (false);
-    }
-
-    async verifyClaimAddress(address, message, signature) {
-        try {
-            // check that signed message is from address...
-            let verified = paraTool.isValidSignature(message, signature, address);
-            if (!verified) {
-                return (false);
-            }
-            let sql = `insert into account ( address, verified, verifyDT ) values ( ${mysql.escape(address)}, 1, Now() ) on duplicate key update verified = values(verified), verifyDT = values(verifyDT)`
-            this.batchedSQL.push(sql);
-            await this.update_batchedSQL();
-            return (true);
-        } catch (err) {
-            this.logger.error({
-                "op": "query.verifyClaimAddress",
-                address,
-                message,
-                signature,
-                err
-            });
-            return false
-        }
-    }
-
-    async getChainsReindex() {
-        try {
-            let sql = `select id, chain.chainID, sum(readyforindexing) as cnt, sum(iF(indexed=0 and readyforindexing > 0, 1, 0)) as TODO, sum(if(indexed=0 and readyforindexing > 0, elapsedSeconds, 0))/(3600*reindexerCount) as hrs, reindexer, reindexerCount from chain join indexlog on indexlog.chainID = chain.chainID where readyforindexing = 1 group by chain.chainID having TODO > 2 order by TODO desc`
-            let chains = await this.poolREADONLY.query(sql);
-            return chains;
-        } catch (err) {
-            this.logger.error({
-                "op": "query.getChainsReindex",
-                err
-            });
-            return false;
-        }
     }
 
     chainFilters(chainList = [], targetChainID) {
@@ -5813,103 +4290,6 @@ module.exports = class Query extends AssetManager {
                 break;
         }
         return rewardAmount * 1000000000000;
-    }
-
-    async getRecentAddressSuggestions(status = "Submitted", lookbackDays = 7) {
-        let sql = `select address, submitter, nickname, addressType, submitDT, status, judgementDT from addresssuggestion where status = '${status}' and submitDT > date_sub(Now(), INTERVAL ${lookbackDays} DAY) order by submitDT Desc`
-        let suggestions = await this.poolREADONLY.query(sql)
-        return suggestions;
-    }
-
-    async updateAddressSuggestionStatus(address, submitter, status, judge = "") {
-        if (address.length != 66) return (false)
-        if (submitter.length != 66) return (false);
-        if (!(status == "Accepted" || status == "Rejected")) return (false);
-        let sql = `update addresssuggestion set status = ${mysql.escape(status)}, judgementDT = Now(), judge = ${mysql.escape(judge)} where address = '${address}' and submitter = '${submitter}'`
-        this.batchedSQL.push(sql);
-        if (status == "Accepted") {
-            let rewardAmount = this.getRewardLevelHOLIC("addresssuggestion");
-            let sql2 = `insert into rewardsholic (address, amount, grantDT, rewardStatus) values ( '${address}',  '${rewardAmount}', Now(), 'Granted' )`
-            this.batchedSQL.push(sql2);
-        }
-        await this.update_batchedSQL();
-    }
-
-    async submitAddressSuggestion(address, nickname, submitter, addressType) {
-        if (address.length != 66) return ({
-            err: "Invalid address"
-        });
-        if (submitter.length != 66) return ({
-            err: "Invalid submitter"
-        });
-        if (nickname.length < 4 || nickname.length > 128) return ({
-            err: "Invalid suggestion (nicknames should be between 4 and 128 characters"
-        });
-        // TODO: check for spamming by submitter
-        try {
-            let vals = ["nickname", "addressType", "submitDT"];
-            let data = `('${address}', '${submitter}', ${mysql.escape(nickname)}, '${addressType}', Now() )`;
-            await this.upsertSQL({
-                "table": "addresssuggestion",
-                "keys": ["address", "submitter"],
-                "vals": vals,
-                "data": [data],
-                "replace": vals
-            });
-            return {
-                status: "Your suggestion has been received."
-            }
-        } catch (err) {
-            return {
-                err: "An error has occurred."
-            }
-        }
-    }
-
-
-    async getEvent(eventID) {
-        let ida = eventID.split("-");
-        if (ida.length != 4) {
-            throw new paraTool.NotFoundError(`Invalid eventID`)
-        }
-        let chainID = parseInt(ida[0], 10);
-        let blockNumber = parseInt(ida[1], 10);
-        let extrinsic = parseInt(ida[2], 10);
-        let event = parseInt(ida[3], 10)
-        let [_, id] = this.convertChainID(chainID);
-        let chain = await this.getChain(chainID);
-
-        try {
-            let families = ["feed", "finalized", "feedevm"];
-            let row = await this.fetch_block(chainID, blockNumber, families, true);
-            let block = row.feed;
-            let eventIndex = 0;
-            for (const extrinsic of block.extrinsics) {
-                for (const e of extrinsic.events) {
-                    if (eventIndex == event) {
-                        return (e)
-                    }
-                    eventIndex++
-                }
-            }
-            if (event < ext.events.length) {
-                return (events[event]);
-            } else {
-                throw new paraTool.NotFoundError(`Invalid eventID: Event ${event} not in Extrinsic ${extrinsic} of Block number ${blockNumber} (# Events: ${events.length})`)
-            }
-            return event;
-        } catch (err) {
-            if (err.code == 404) {
-                throw new paraTool.NotFoundError(`Block not found: ${blockNumber}`)
-            }
-            this.logger.error({
-                "op": "query.getEvent",
-                chainID,
-                blockNumber,
-                err
-            });
-        }
-        return (null);
     }
 
 
@@ -6367,17 +4747,6 @@ module.exports = class Query extends AssetManager {
                 decimals: this.assetInfo[assetChain].decimals,
                 symbol: this.assetInfo[assetChain].symbol,
             }
-            if (decorateUSD) {
-                let p = await this.computePriceUSD({
-                    asset,
-                    chainID,
-                    ts: blockTS
-                });
-                if (p) {
-                    dXCMAsset.priceUSD = p.priceUSD
-                    dXCMAsset.priceUSDCurrent = p.priceUSDCurrent
-                }
-            }
             return dXCMAsset
         } else {
             // should not happen.
@@ -6824,20 +5193,6 @@ module.exports = class Query extends AssetManager {
         }
     }
 
-    async getRouter(routerAssetChain) {
-        let sql = `select routerName, routerAssetChain, tvl from router where routerAssetChain = '${routerAssetChain}' limit 1`;
-        let routers = await this.poolREADONLY.query(sql)
-        if (routers.length == 0) {
-            throw new paraTool.InvalidError(`${routerAssetChain} not found`)
-        }
-        let router = routers[0];
-        [router.asset, router.chainID] = paraTool.parseAssetChain(router.routerAssetChain);
-        let [chainID, id] = this.convertChainID(router.chainID);
-        router.id = id;
-        router.chainName = this.getChainName(chainID)
-        return router;
-    }
-
     canonicalize_chainfilters(chainfilters) {
         if (typeof chainfilters == "string") {
             if (chainfilters == "all") return [];
@@ -6856,30 +5211,8 @@ module.exports = class Query extends AssetManager {
         return out;
     }
 
-    async getRouters(q, limit = 100) {
-        let w = [];
-        if (q.chainfilters) {
-            let chainfilters = this.canonicalize_chainfilters(q.chainfilters);
-            if (chainfilters && (chainfilters.length > 0)) {
-                w.push(` chainID in (${chainfilters.join(",")})`)
-            }
-        }
-        w.push("tvl > 0");
-        let wstr = (w.length > 0) ? `where ${w.join(" and ")}` : "";
-        let sql = `select routerName, routerAssetChain, chainID, tvl from router ${wstr} order by tvl desc limit ${limit}`;
-        let routers = await this.poolREADONLY.query(sql)
-        for (const r of routers) {
-            [r.asset, r.chainID] = paraTool.parseAssetChain(r.routerAssetChain);
-            let [chainID, id] = this.convertChainID(r.chainID);
-            r.id = id;
-            r.chainName = this.getChainName(chainID)
-        }
-
-        return routers;
-    }
-
     async getPool(asset, chainID) {
-        let sql = `select assetType, asset, chainID, assetName, token0, token1, token0Symbol, token1Symbol, symbol, decimals, priceUSD, totalFree, totalReserved, apy1d, apy7d, apy30d, feesUSD1d, feesUSD7d, feesUSD30d from asset where asset = '${asset}' and chainID = '${chainID}'`
+        let sql = `select assetType, asset, chainID, assetName, token0, token1, token0Symbol, token1Symbol, symbol, decimals, priceUSD, totalFree, totalReserved, apy1d, feesUSD1d from asset where asset = '${asset}' and chainID = '${chainID}'`
         let pools = await this.poolREADONLY.query(sql)
         if (pools.length == 0) {
             throw new paraTool.InvalidError(`${asset}/${chainID} not found`)
@@ -6895,46 +5228,6 @@ module.exports = class Query extends AssetManager {
         return p;
     }
 
-    async getPoolHistory(asset, chainID, interval = "hourly", lookbackDays = 90) {
-        let sql = `select indexTS, priceUSD, low, high, open, close, lp0, lp1, token0Volume, token1Volume, issuance, CONVERT(state using utf8) as state from assetlog where asset = '${asset}' and chainID = '${chainID}' and indexTS > UNIX_TIMESTAMP(date_sub(Now(), INTERVAL ${lookbackDays} DAY)) and indexTS % 3600 = 0 order by indexTS desc`
-        console.log("getPoolHistory", sql);
-        let recs = await this.poolREADONLY.query(sql)
-        let h = [];
-        let pool = await this.getPool(asset, chainID);
-
-        let token0 = pool.token0;
-        let token1 = pool.token1;
-        for (const r of recs) {
-            let p0 = await this.getTokenPriceUSD(token0, chainID, r.indexTS + 1800);
-            let p1 = await this.getTokenPriceUSD(token1, chainID, r.indexTS + 1800);
-            if (p0 && p1) {
-                let issuance = parseFloat(r.issuance);
-                let tvlUSD = p0.priceUSD * r.lp0 + p1.priceUSD * r.lp1;
-                let priceUSD = tvlUSD / issuance;
-                let state = JSON.parse(r.state);
-                let volumeUSD = parseFloat(r.token0Volume) * p0.priceUSD + parseFloat(r.token1Volume) * p1.priceUSD;
-                let feesUSD = .0025 * volumeUSD; // (state.token0Volume) * 0.0025 * p0.priceUSD + (s.token1Volume) * 0.0025 * p1.priceUSD;
-                let feesUSDimp = state.token0Fee * p0.priceUSD + state.token1Fee * p1.priceUSD; // which could be negative
-                h.push({
-                    indexTS: r.indexTS,
-                    issuance: issuance,
-                    priceUSD: priceUSD,
-                    open: r.open,
-                    low: r.low,
-                    high: r.high,
-                    close: r.close,
-                    tvlUSD: tvlUSD,
-                    volumeUSD: volumeUSD,
-                    feesUSD: feesUSD,
-                    feesUSDimp: feesUSDimp
-                });
-            }
-        }
-        h.sort(function(a, b) {
-            return (a.indexTS - b.indexTS);
-        });
-        return h;
-    }
 
     async getPools(q) {
         try {
@@ -6959,12 +5252,9 @@ module.exports = class Query extends AssetManager {
                     w.push(`( chainID in (${chainfilters.join(",")}) or token0xcmchainID in (${chainfilters.join(",")}) or token1xcmchainID in (${chainfilters.join(",")}))`);
                 }
             }
-            if (w.length == 0) {
-                w.push(" tvlUSD > 0 ");
-            }
             w.push(`assetType in ('ERC20LP', 'LiquidityPair')`);
             let wstr = (w.length > 0) ? w.join(" and ") : "";
-            let sql = `select assetType, assetName, asset, chainID, priceUSD, symbol as localSymbol, decimals, currencyID, token0, token1, token0Decimals, token1Decimals, token0Symbol, token1Symbol, totalFree, totalReserved, totalMiscFrozen, totalFrozen, token0Supply, token1Supply, totalSupply, numHolders, tvlUSD, apy1d, apy7d, apy30d, feesUSD1d, feesUSD7d, feesUSD30d from asset where ${wstr};`
+            let sql = `select assetType, assetName, asset, chainID, priceUSD, symbol as localSymbol, decimals, currencyID, token0, token1, token0Decimals, token1Decimals, token0Symbol, token1Symbol, totalFree, totalReserved, totalMiscFrozen, totalFrozen, token0Supply, token1Supply, totalSupply, numHolders, tvlUSD, apy1d, feesUSD1d from asset where ${wstr};`
             console.log(sql);
 
             let pools = await this.poolREADONLY.query(sql)

@@ -8,12 +8,13 @@ async function loadDataTrace(pathParams, tableName) {
             "Accept": "application/json; odata=verbose",
         })
     });
-
     fetch(req)
         .then((response) => response.json())
         .then((data) => {
+    console.log(data);
             if (data.length > 0) {
                 let t = data[0].trace; // TODO: choose the matching blockHash, not the first one
+
                 if (t != undefined) {
                     var table = $(tableName).DataTable();
                     table.clear();

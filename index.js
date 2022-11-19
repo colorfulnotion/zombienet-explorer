@@ -984,13 +984,13 @@ app.get('/block/:chainID_or_chainName/:blockNumber', async (req, res) => {
     try {
         let [chainID, id] = query.convertChainID(chainID_or_chainName)
         let chain = await query.getChain(chainID);
+
         let blockNumber = parseInt(req.params["blockNumber"], 10);
         let blockHash = (req.query.blockhash != undefined) ? req.query.blockhash : '';
         let [decorate, decorateExtra] = decorateOptUI(req)
         var b = await query.getBlock(chainID, blockNumber, blockHash, decorate, decorateExtra);
         if (b) {
-            let view = (chain.isEVM == 1 && b.evmBlock) ? 'evmBlock' : 'block';
-            res.render(view, {
+            res.render('block', {
                 b: b,
                 blockNumber: blockNumber,
                 blockHash: blockHash,
@@ -1001,7 +1001,12 @@ app.get('/block/:chainID_or_chainName/:blockNumber', async (req, res) => {
                 apiUrl: req.path,
                 docsSection: "get-block"
             });
-        }
+        } else {
+            res.render('notfound', {
+                recordtype: "block",
+                chainInfo: query.getChainInfo()
+            });
+	}
     } catch (err) {
         if (err instanceof paraTool.NotFoundError) {
             res.render('notfound', {

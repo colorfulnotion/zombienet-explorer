@@ -29,6 +29,7 @@ chain = "rococo-local"
 id = 2000
 chain = "moonbase-local"
 cumulus_based = true
+features = ["evm", "systemcontracts", "remoteexecution"]
 
   [[parachains.collators]]
   name = "alith"
@@ -40,6 +41,7 @@ cumulus_based = true
 id = 2001
 chain = "moonbase-local"
 cumulus_based = true
+features = ["evm", "systemcontracts", "remoteexecution"]
 
   [[parachains.collators]]
   name = "baltathar"

@@ -307,9 +307,6 @@ module.exports = class PolkaholicDB {
     }
 
     getRelayChainID(chainID) {
-        if (chainID == paraTool.chainIDPolkadot || chainID == paraTool.chainIDKusama) {
-            return (chainID);
-        }
         if (this.chainInfos[chainID] == undefined) {
             console.log("1: could not determine relaychainID", chainID);
             return (false);
@@ -511,121 +508,32 @@ module.exports = class PolkaholicDB {
         await this.update_batchedSQL(sqlMax);
     }
 
-    /*
-    chainID: 0
-    chainIDDest: 1000
-    violationType: symbol
-     parser: processV1ConcreteFungible
-     caller: processOutgoingXcmPallet xcmPallet:limitedTeleportAssets
-    errorcase: NULL
-    instruction: {"id":{"concrete":{"parents":0,"interior":{"here":null}}},"fun":{"fungible":11000000000}}
-    instructionHash: caad52bdc0938215c32c6778f2e1a1701e35ce397e72d1534cda9b09caa02c07
-    sourceBlocknumber: 12224070
-    sourceTS: 1664234238
-    indexDT: 2022-09-27 21:50:39
-    */
-    async getXcmViolation(violationType = 'symbol') {
-        let xcmViolations = await this.poolREADONLY.query(`select chainID, chainIDDest, violationType, parser, caller, errorcase, instruction, sourceBlocknumber, sourceTS, indexDT from xcmViolation where violationType='${violationType}' order by chainID`)
-        let res = {}
-        for (const v of xcmViolations) {
-            let chainID = v.chainID
-            if (res[chainID] == undefined) res[chainID] = []
-            v.instruction = JSON.parse(`${v.instruction}`)
-            res[chainID].push(v)
-        }
-        return res
-    }
-
     async getChains(crawling = 1, orderBy = "valueTransfersUSD7d DESC") {
         let chains = await this.poolREADONLY.query(`select id, ss58Format as prefix, chain.chainID, chain.chainName, blocksCovered, blocksFinalized, chain.symbol, lastCrawlDT, lastFinalizedDT, unix_timestamp(lastCrawlDT) as lastCrawlTS,
-unix_timestamp(lastFinalizedDT) as lastFinalizedTS,  iconUrl, numExtrinsics7d, numExtrinsics30d, numExtrinsics, numSignedExtrinsics7d, numSignedExtrinsics30d, numSignedExtrinsics, numTransfers7d, numTransfers30d, numTransfers, numEvents7d, numEvents30d, numEvents,
-valueTransfersUSD7d, valueTransfersUSD30d, valueTransfersUSD, numTransactionsEVM, numTransactionsEVM7d, numTransactionsEVM30d, numAccountsActive, numAccountsActive7d, numAccountsActive30d, chain.relayChain, totalIssuance, lastUpdateChainAssetsTS,
-onfinalityID, onfinalityStatus, isEVM, chain.asset, WSEndpoint, WSEndpoint2, WSEndpoint3, active, crawlingStatus, githubURL, substrateURL, parachainsURL, dappURL, xcmasset.priceUSD, xcmasset.priceUSDPercentChange, 0 as numHolders
-from chain left join xcmasset on chain.symbol = xcmasset.symbol and chain.relayChain = xcmasset.relayChain where crawling = ${crawling} order by ${orderBy}`);
+unix_timestamp(lastFinalizedDT) as lastFinalizedTS,  iconUrl, numExtrinsics, numSignedExtrinsics, numTransfers, numEvents, numTransactionsEVM, numAccountsActive, chain.relayChain, totalIssuance, lastUpdateChainAssetsTS,
+features, isEVM, chain.asset, WSEndpoint, WSEndpoint2, WSEndpoint3, active, crawlingStatus, githubURL, substrateURL, parachainsURL, dappURL, xcmasset.priceUSD, xcmasset.priceUSDPercentChange, 0 as numHolders
+from chain left join xcmasset on chain.symbol = xcmasset.symbol and chain.relayChain = xcmasset.relayChain order by ${orderBy}`);
         return (chains);
     }
 
-    async getChainsForAdmin(crawling = 1) {
-        let chains = await this.poolREADONLY.query(`select id, ss58Format as prefix, chainID, chain.chainName, symbol, iconUrl, relayChain, onfinalityID, onfinalityStatus, isEVM, asset, WSEndpoint, WSEndpoint2, WSEndpoint3, paraID from chain where crawling = ${crawling} order by chainID`);
-        return (chains);
-    }
-
-    async getChainForAdmin(chainID = 0) {
-        let chains = await this.poolREADONLY.query(`select id, ss58Format as prefix, chainID, chain.chainName, symbol, iconUrl, relayChain, onfinalityID, onfinalityStatus, isEVM, asset, WSEndpoint, WSEndpoint2, WSEndpoint3, paraID from chain where chainID = ${chainID} order by chainID`);
-        if (chains.length == 0) return (false);
-        return (chains[0]);
-    }
-
-    async get_chains_external(crawling = 1) {
-        let chains = await this.poolREADONLY.query(`select id, WSEndpoint, ss58Format as prefix, chain.chainID, CONCAT(UPPER(SUBSTRING(chain.chainName,1,1)),LOWER(SUBSTRING(chain.chainName,2))) AS chainName, chain.symbol, unix_timestamp(lastFinalizedDT) as lastFinalizedTS, iconUrl,
-numExtrinsics7d, numExtrinsics30d, numExtrinsics, numSignedExtrinsics7d, numSignedExtrinsics30d, numSignedExtrinsics, numTransfers7d, numTransfers30d, numTransfers, numEvents7d, numEvents30d, numEvents, valueTransfersUSD7d, valueTransfersUSD30d, valueTransfersUSD,
-numXCMTransferIncoming, numXCMTransferIncoming7d, numXCMTransferIncoming30d, numXCMTransferOutgoing, numXCMTransferOutgoing7d, numXCMTransferOutgoing30d, valXCMTransferIncomingUSD, valXCMTransferIncomingUSD7d, valXCMTransferIncomingUSD30d, valXCMTransferOutgoingUSD,
-valXCMTransferOutgoingUSD7d, valXCMTransferOutgoingUSD30d, numTransactionsEVM, numTransactionsEVM7d, numTransactionsEVM30d, 0 as numHolders, numAccountsActive, numAccountsActive7d, numAccountsActive30d, chain.relayChain, totalIssuance, isEVM, blocksCovered, blocksFinalized,
-crawlingStatus, githubURL, substrateURL, parachainsURL, dappURL, chain.asset, xcmasset.decimals, xcmasset.priceUSD, xcmasset.priceUSDPercentChange
-from chain left join xcmasset on chain.symbol = xcmasset.symbol and chain.relayChain = xcmasset.relayChain  order by relayChain, id, chainID;`);
-        return (chains);
-    }
 
     async getChain(chainID, withSpecVersions = false) {
-        var chains = await this.poolREADONLY.query(`select id, ss58Format as prefix, chainID, chainName, WSEndpoint, WSEndpointSelfHosted, WSEndpoint2, WSEndpoint3, WSBackfill, RPCBackfill, evmChainID, evmRPC, evmRPCInternal, blocksCovered, blocksFinalized, isEVM, backfillLookback, lastUpdateChainAssetsTS, onfinalityID, onfinalityStatus, numHolders, asset, relayChain, lastUpdateStorageKeysTS, crawlingStatus,
-numExtrinsics, numExtrinsics7d, numExtrinsics30d,
-numSignedExtrinsics, numSignedExtrinsics7d, numSignedExtrinsics30d,
-numTransfers, numTransfers7d, numTransfers30d,
-numEvents, numEvents7d, numEvents30d,
-numTransactionsEVM, numTransactionsEVM7d, numTransactionsEVM30d,
-numReceiptsEVM, numReceiptsEVM7d, numReceiptsEVM30d,
+        var chains = await this.poolREADONLY.query(`select id, ss58Format as prefix, chainID, chainName, WSEndpoint, WSEndpointSelfHosted, WSEndpoint2, WSEndpoint3, WSBackfill, RPCBackfill, evmChainID, evmRPC, evmRPCInternal, blocksCovered, blocksFinalized, isEVM, backfillLookback, lastUpdateChainAssetsTS, features, numHolders, asset, relayChain, lastUpdateStorageKeysTS, crawlingStatus,
+numExtrinsics,
+numSignedExtrinsics,
+numTransfers,
+numEvents,
+numTransactionsEVM,
+numReceiptsEVM,
 floor(gasUsed / (numEVMBlocks+1)) as gasUsed,
-floor(gasUsed7d / (numEVMBlocks7d+1)) as gasUsed7d,
-floor(gasUsed30d / (numEVMBlocks30d+1)) as gasUsed30d,
 floor(gasLimit / (numEVMBlocks+1)) as gasLimit,
-floor(gasLimit7d / (numEVMBlocks7d+1)) as gasLimit7d,
-floor(gasLimit30d / (numEVMBlocks30d+1)) as gasLimit30d,
-numXCMTransferIncoming, numXCMTransferIncoming7d, numXCMTransferIncoming30d,
-numXCMTransferOutgoing, numXCMTransferOutgoing7d, numXCMTransferOutgoing30d,
-valXCMTransferIncomingUSD, valXCMTransferIncomingUSD7d, valXCMTransferIncomingUSD30d,
-valXCMTransferOutgoingUSD, valXCMTransferOutgoingUSD7d, valXCMTransferOutgoingUSD30d
-from chain where chainID = '${chainID}' limit 1`);
-        if (chains.length == 0) return (false);
-        let chain = chains[0];
-        if (withSpecVersions) {
-            let specVersions = await this.poolREADONLY.query(`select specVersion, blockNumber, blockHash from specVersions where chainID = '${chainID}' and blockNumber > 0 order by specVersion`);
-            chain.specVersions = specVersions;
-        }
-        // because some chains don't have subscribeStorage support (and subscribeStorage updates blocksCovered...)
-        if (chain.blocksCovered == null || chain.blocksCovered < chain.blocksFinalized) {
-            chain.blocksCovered = chain.blocksFinalized
-        }
-        if (chainID == paraTool.chainIDPolkadot || chainID == paraTool.chainIDKusama) {
-            let paraIDs = await this.poolREADONLY.query(`select paraID from chainparachain where chainID = '${chainID}'`);
-            for (let i = 0; i < paraIDs.length; i++) {
-                let paraID = paraIDs[i].paraID;
-                this.paraIDs.push(paraID);
+numXCMTransferIncoming, 
+numXCMTransferOutgoing 
 
-            }
-        }
-        return chain;
-    }
-    async getChainWithVersion(chainID, withSpecVersions = false) {
-        var chains = await this.poolREADONLY.query(`select id, ss58Format as prefix, chainID, chainName, WSEndpoint, WSEndpointSelfHosted, WSEndpoint2, WSEndpoint3, WSBackfill, RPCBackfill, evmChainID, evmRPC, evmRPCInternal, blocksCovered, blocksFinalized, isEVM, backfillLookback, lastUpdateChainAssetsTS, onfinalityID, onfinalityStatus, numHolders, asset, relayChain, lastUpdateStorageKeysTS, crawlingStatus,
-numExtrinsics, numExtrinsics7d, numExtrinsics30d,
-numSignedExtrinsics, numSignedExtrinsics7d, numSignedExtrinsics30d,
-numTransfers, numTransfers7d, numTransfers30d,
-numEvents, numEvents7d, numEvents30d,
-numTransactionsEVM, numTransactionsEVM7d, numTransactionsEVM30d,
-numReceiptsEVM, numReceiptsEVM7d, numReceiptsEVM30d,
-floor(gasUsed / (numEVMBlocks+1)) as gasUsed,
-floor(gasUsed7d / (numEVMBlocks7d+1)) as gasUsed7d,
-floor(gasUsed30d / (numEVMBlocks30d+1)) as gasUsed30d,
-floor(gasLimit / (numEVMBlocks+1)) as gasLimit,
-floor(gasLimit7d / (numEVMBlocks7d+1)) as gasLimit7d,
-floor(gasLimit30d / (numEVMBlocks30d+1)) as gasLimit30d,
-numXCMTransferIncoming, numXCMTransferIncoming7d, numXCMTransferIncoming30d,
-numXCMTransferOutgoing, numXCMTransferOutgoing7d, numXCMTransferOutgoing30d,
-valXCMTransferIncomingUSD, valXCMTransferIncomingUSD7d, valXCMTransferIncomingUSD30d,
-valXCMTransferOutgoingUSD, valXCMTransferOutgoingUSD7d, valXCMTransferOutgoingUSD30d
 from chain where chainID = '${chainID}' limit 1`);
         if (chains.length == 0) return (false);
         let chain = chains[0];
+
         if (withSpecVersions) {
             let specVersions = await this.poolREADONLY.query(`select specVersion, blockNumber, blockHash from specVersions where chainID = '${chainID}' and blockNumber > 0 order by specVersion`);
             chain.specVersions = specVersions;
@@ -645,29 +553,12 @@ from chain where chainID = '${chainID}' limit 1`);
         return chain;
     }
 
-    async getWeb3Api(chain, backfill = false) {
+    async getWeb3Api(chain) {
         if (this.web3Api) return (this.web3Api);
-
         const Web3 = require('web3')
-        var rpcURL = false;
-        if (chain.isEVM > 0) {
-            if (chain.evmRPC) {
-                rpcURL = chain.evmRPC;
-                if (backfill && chain.evmRPCInternal && chain.evmRPCInternal.length > 0) {
-                    rpcURL = chain.evmRPCInternal;
-                    console.log("**** USING evmRPCInternal", rpcURL);
-                }
-            } else if (chain.RPCBackfill) {
-                rpcURL = chain.RPCBackfill;
-            }
-            if (rpcURL) {
-                var web3Api = new Web3(rpcURL)
-                var bn = await web3Api.eth.getBlockNumber()
-                console.log(`web3Api ${rpcURL} is ready currentBN=${bn}`)
-                return web3Api
-            }
-        }
-        return false
+	var web3Api = new Web3(chain.evmRPC);
+        console.log(`web3Api ${chain.evmRPC}`)
+        return web3Api
     }
 
     async getTestParseTraces(testGroup = 1) {
@@ -718,24 +609,6 @@ from chain where chainID = '${chainID}' limit 1`);
         this.chainName = chain.chainName;
     }
 
-    async get_chain_hostname_endpoint(chain, useWSBackfill) {
-        if (useWSBackfill) {
-            return chain.WSBackfill
-        }
-        let hostname = os.hostname();
-        let endpoints = await this.poolREADONLY.query(`select endpoint from chainhostnameendpoint where chainID = '${chain.chainID}' and hostname = '${hostname}'`);
-        if (endpoints.length > 0) {
-            let endpoint = parseInt(endpoints[0].endpoint, 10);
-            if (endpoint == 1 && (chain.WSEndpoint2 != null) && chain.WSEndpoint2.length > 0) {
-                return (chain.WSEndpoint2)
-            }
-            if (endpoint == 2 && (chain.WSEndpoint3 != null) && chain.WSEndpoint3.length > 0) {
-                return (chain.WSEndpoint3)
-            }
-        }
-        return (chain.WSEndpoint);
-    }
-
     async get_api(chain, useWSBackfill = false) {
         const chainID = chain.chainID;
         const {
@@ -748,7 +621,7 @@ from chain where chainID = '${chainID}' limit 1`);
             StorageKey,
             decorateStorage
         } = require('@polkadot/types');
-        let endpoint = await this.get_chain_hostname_endpoint(chain, useWSBackfill);
+	let endpoint = chain.WSEndpoint;
         const provider = new WsProvider(endpoint);
         provider.on('disconnected', () => {
             console.log('CHAIN API DISCONNECTED', chain.chainID);
@@ -917,237 +790,64 @@ from chain where chainID = '${chainID}' limit 1`);
         return api;
     }
 
-    async insertBTRows(tbl, rows, tableName = "") {
-	console.log("INSERTBTRows");
-	process.exit(0);
-    }
-    build_block_from_row(row) {
-	console.log("TODO: build_block_from_row");
-	return(false);
-        let rowData = row.data;
-        let r = {
-            block: false,
-            blockHash: false,
-            blockNumber: false,
-            events: false,
-            trace: false,
-            autotrace: false,
-            evmBlock: false,
-            finalized: false,
-            traceType: false,
-            blockStats: false,
-            feed: false
-        }
-        r.blockNumber = parseInt(row.id.substr(2), 16);
-        // 0. get the finalized blockHash; however, any "raw" column is also finalized
-        //console.log(`returned families`, Object.keys(rowData))
-        if (rowData["finalized"]) {
-            let columnFamily = rowData["finalized"];
-            for (const h of Object.keys(columnFamily)) {
-                r.blockHash = h;
-                r.finalized = true;
-                // TODO: check that its unique
-            }
-        }
+    async fetch_block(chainID, blockNumber, blockHash = false) {
+	try {
+            const tableChain = this.getTableChain(chainID);
+	    let w = blockHash ? ` and blockHash = '${blockHash}' ` : "";
+	    let sql = `select unix_timestamp(blockDT) as blockTS, convert(blockraw using utf8) as blockraw, convert(feed using utf8) as feed, convert(trace using utf8) as trace, convert(evmBlock using utf8) as evmBlock, convert(evmReceipts using utf8) as evmReceipts, convert(events using utf8) as events, numXCMTransfersIn, numXCMMessagesIn, numXCMTransfersOut, numXCMMessagesOut, blockHashEVM, parentHashEVM, numTransactionsEVM, numTransactionsInternalEVM, numReceiptsEVM, gasUsed, gasLimit from block${chainID} where blockNumber = ${blockNumber}`
+	    let blocks = await this.poolREADONLY.query(sql)
+	    if ( blocks.length == 1 ) {
+		let b = blocks[0];
+		b.blockraw = JSON.parse(b.blockraw);
+		b.block = JSON.parse(b.feed);
+		b.trace = JSON.parse(b.trace);
+		b.events = JSON.parse(b.events);
+		b.evmBlock = JSON.parse(b.evmBlock);
+		b.evmReceipts = JSON.parse(b.evmReceipts);
+		b.block.finalized = true;
+		return b;
+	    }
+	    let sql2 = `select unix_timestamp(blockDT) as blockTS, convert(blockraw using utf8) as blockraw, convert(feed using utf8) as feed, convert(trace using utf8) as trace, evmBlock, evmReceipts, convert(events using utf8) as events, numXCMTransfersIn, numXCMMessagesIn, numXCMTransfersOut, numXCMMessagesOut, blockHashEVM, parentHashEVM, numTransactionsEVM, numTransactionsInternalEVM, numReceiptsEVM, gasUsed, gasLimit from blockunfinalized where chainID = ${chainID} and blockNumber = ${blockNumber} ${w}`
+	    let blocks2 = await this.poolREADONLY.query(sql2)
 
-        // 1. store extrinsics of the block in the address in feed
-        if (rowData["blockraw"]) {
-            let cell = (r.blockHash && rowData["blockraw"][r.blockHash]) ? rowData["blockraw"][r.blockHash][0] : false;
-            let cellEvents = (r.blockHash && rowData["events"] && rowData["events"][r.blockHash]) ? rowData["events"][r.blockHash][0] : false;
-            if (cell) {
-                r.block = JSON.parse(cell.value);
-                if (cellEvents) r.events = JSON.parse(cellEvents.value);
-                r.blockHash = r.block.hash;
-            } else {
-                console.log("no finalized block", r.blockNumber);
-            }
-        }
-
-        // 2. process deduped traceBlock
-        if (rowData["trace"]) {
-            let cell = (rowData["trace"]["raw"]) ? rowData["trace"]["raw"][0] : (r.blockHash && rowData["trace"][r.blockHash]) ? rowData["trace"][r.blockHash][0] : false;
-            if (cell) {
-                r.trace = JSON.parse(cell.value);
-                let cellTS = cell.timestamp / 1000000;
-                if (rowData["n"] && rowData["n"]["traceType"]) {
-                    let traceTypeCell = rowData["n"]["traceType"][0];
-                    switch (traceTypeCell.value) {
-                        case "subscribeStorage":
-                        case "state_traceBlock":
-                            r.traceType = traceTypeCell.value;
-                    }
-                }
-            }
-        }
-        if (rowData["autotrace"]) {
-            let cell = (r.blockHash && rowData["autotrace"][r.blockHash]) ? rowData["autotrace"][r.blockHash][0] : false;
-            if (cell) {
-                r.autotrace = JSON.parse(cell.value);
-            }
-        }
-
-        // 3. return feed
-        if (rowData["feed"]) {
-            let cell = (r.blockHash && rowData["feed"][r.blockHash]) ? rowData["feed"][r.blockHash][0] : false;
-            if (cell) {
-                r.feed = JSON.parse(cell.value);
-            }
-        }
-
-        // 4. return blockrawevm
-        if (rowData["blockrawevm"]) {
-            let cell = (r.blockHash && rowData["blockrawevm"][r.blockHash]) ? rowData["blockrawevm"][r.blockHash][0] : false;
-            if (cell) {
-                r.evmBlock = JSON.parse(cell.value);
-            }
-        }
-
-        // 5. return receiptsevm
-        if (rowData["receiptsevm"]) {
-            let cell = (r.blockHash && rowData["receiptsevm"][r.blockHash]) ? rowData["receiptsevm"][r.blockHash][0] : false;
-            if (cell) {
-                r.evmReceipts = JSON.parse(cell.value);
-            }
-        }
-
-        // 5b. return traceevm
-        if (rowData["traceevm"]) {
-            let cell = (r.blockHash && rowData["traceevm"][r.blockHash]) ? rowData["traceevm"][r.blockHash][0] : false;
-            if (cell) {
-                r.evmTrace = JSON.parse(cell.value);
-            }
-        }
-
-        // 6. return feedevm (evmFullBlock)
-        if (rowData["feedevm"]) {
-            let cell = (r.blockHash && rowData["feedevm"][r.blockHash]) ? rowData["feedevm"][r.blockHash][0] : false;
-            if (cell) {
-                r.evmFullBlock = JSON.parse(cell.value);
-            }
-        }
-
-        return r;
-    }
-
-    build_feed_from_row(row, requestedBlockHash = false) {
-        let rowData = row.data;
-        let r = {
-            blockHash: false,
-            blockNumber: false,
-            evmFullBlock: false,
-            finalized: false,
-            feed: false
-        }
-        r.blockNumber = parseInt(row.id.substr(2), 16);
-        // 0. get the finalized blockHash; however, any "raw" column is also finalized
-        //console.log(`returned families`, Object.keys(rowData))
-        if (rowData["finalized"]) {
-            let columnFamily = rowData["finalized"];
-            for (const h of Object.keys(columnFamily)) {
-                r.blockHash = h;
-                r.finalized = true;
-                // TODO: check that its unique
-            }
-        } else {
-            let blockHashes = Object.keys(rowData["feed"])
-            //console.log(`${r.blockNumber} hashes`, blockHashes)
-            if (requestedBlockHash && rowData["feed"][requestedBlockHash]) {
-                r.blockHash = requestedBlockHash;
-            } else if (blockHashes.length > 0) {
-                r.blockHash = blockHashes[0];
-            }
-        }
-
-        // 1. return feed
-        if (rowData["feed"]) {
-            let cell = (r.blockHash && rowData["feed"][r.blockHash]) ? rowData["feed"][r.blockHash][0] : false;
-            if (cell) {
-                r.feed = JSON.parse(cell.value);
-            }
-        }
-
-        // 2. return feedevm (evmFullBlock)
-        if (rowData["feedevm"]) {
-            let cell = (r.blockHash && rowData["feedevm"][r.blockHash]) ? rowData["feedevm"][r.blockHash][0] : false;
-            if (cell) {
-                r.evmFullBlock = JSON.parse(cell.value);
-            }
-        }
-        return r;
-    }
-
-    async fetch_block(chainID, blockNumber, families = ["feed", "finalized"], feedOnly = false, blockHash = false) {
-        const tableChain = this.getTableChain(chainID);
-	let row = {
-	    blockTS: null,
-	    feed: null,
-	    trace: null,
-	    events: null,
-	    evmBlock: null,
-	    evmReceipts: null
+	    if ( blocks2.length > 0 ) {
+		// we return the first unfinalized record if blockHash not specified
+		let b = blocks2[0];
+		let row = {
+		    blockTS: b.blockTS,
+		    blockraw: b.blockraw ? JSON.parse(b.blockraw) : null,
+		    block: b.feed ? JSON.parse(b.feed) : null,
+		    trace: b.trace ? JSON.parse(b.trace) : null,
+		    events: b.events ? JSON.parse(b.events) : null,
+		    evmBlock: JSON.parse(b.evmBlock),
+		    evmReceipts: JSON.parse(b.evmReceipts),
+		    numXCMTransfersIn: 0,
+		    numXCMMessagesIn: 0,
+		    numXCMTransfersOut: 0,
+		    numXCMMessagesOut: 0,
+		    blockHashEVM: b.blockHashEVM,
+		    parentHashEVM: b.parentHashEVM,
+		    numTransactionsEVM: b.numTransactionsEVM,
+		    numTransactionsInternalEVM: b.numTransactionsInternalEVM,
+		    numReceiptsEVM: b.numReceiptsEVM,
+		    gasUsed: b.gasUsed, 
+		    gasLimit: b.gasLimit,
+		}
+		row.block.finalized = false;
+		console.log("fetch_block SUCC");
+		return row;
+	    } else {
+		console.log("fetch_block FAIL");
+	    }
+	} catch (err) {
+	    console.log(err);
 	}
-	let w = blockHash ? ` and blockHash = '${blockHash}' ` : "";
-	let sql = `select unix_timestamp(blockDT) as blockTS, convert(feed using utf8) as feed, convert(trace using utf8) as trace, convert(evmBlock using utf8) as evmBlock, convert(evmReceipts using utf8) as evmReceipts, convert(events using utf8) as events from block${chainID} where blockNumber = ${blockNumber}`
-	let blocks = await this.poolREADONLY.query(sql)
-	if ( blocks.length == 1 ) {
-	    let b = blocks[0];
-	    row.blockTS = b.blockTS;
-	    row.feed = JSON.parse(b.feed);
-	    row.trace = JSON.parse(b.trace);
-	    row.events = JSON.parse(b.events);
-	    row.evmBlock = JSON.parse(b.evmBlock);
-	    row.evmReceipts = JSON.parse(b.evmReceipts);
-	}
-	let sql2 = `select unix_timestamp(blockDT) as blockTS, convert(feed using utf8) as feed, convert(trace using utf8) as trace, evmBlock, evmReceipts, convert(events using utf8) as events from blockunfinalized where chainID = ${chainID} and blockNumber = ${blockNumber} ${w}`
-	let blocks2 = await this.poolREADONLY.query(sql2)
-
-	if ( blocks2.length > 0 ) {
-	    let b = blocks2[0];
-	    if ( row.blockTS == null ) row.blockTS = b.blockTS;
-	    if ( row.feed == null ) row.feed = JSON.parse(b.feed);
-	    if ( row.trace == null ) row.trace = JSON.parse(b.trace);
-	    if ( row.events == null ) row.events = JSON.parse(b.events);
-	    if ( row.evmBlock == null ) row.evmBlock = JSON.parse(b.evmBlock);
-	    if ( row.evmReceipts == null ) row.evmReceipts = JSON.parse(b.evmReceipts);
-	}
-
-	return row;
-    }
-
-    async fetch_block_row(chain, blockNumber, families = ["blockraw", "trace", "events", "feed", "n", "finalized", "feed", "autotrace"], feedOnly = false, blockHash = false) {
-        let chainID = chain.chainID;
-        const tableChain = this.getTableChain(chainID);
-	console.log("TODO fetch_block", chainID, tableChain);
-	process.exit(0);
-
-        return this.build_block_from_row(row)
-    }
-
-    push_rows_related_keys(family, column, rows, key, c) {
-        let ts = this.getCurrentTS();
-        let colData = {}
-        colData[`${column}`] = {
-            value: JSON.stringify(c),
-            timestamp: ts * 1000000
-        }
-        let data = {}
-        data[`${family}`] = colData
-        let row = {
-            key: key.toLowerCase(),
-            data
-        }
-        //console.log("PUSH", row);
-        rows.push(row);
+	// if not found, return null
+	return null;
     }
 
     getCurrentTS() {
         return Math.round(new Date().getTime() / 1000);
-    }
-
-    add_index_metadata(c) {
-        c.source = this.hostname;
-        c.genTS = this.getCurrentTS();
-        c.commit = this.indexerInfo;
     }
 
     capitalizeFirstLetter(string) {

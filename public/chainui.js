@@ -955,7 +955,7 @@ function show_recentblocks(chainID) {
                 data: 'blockHash',
                 render: function(data, type, row, meta) {
                     if (type == 'display') {
-                        let f = (row.finalized == 0) ? presentFinalized(false) : "";
+                        let f = (row.finalized) ? "" : presentFinalized(false);
                         return f + " " + presentBlockHash(chainID, false, row.blockNumber, data);
                     }
                     return data;
@@ -1046,15 +1046,8 @@ function show_recentblocks(chainID) {
                     }
                     return data;
                 }
-            }, {
-                data: 'valueTransfersUSD',
-                render: function(data, type, row, meta) {
-                    if (type == 'display') {
-                        return currencyFormat(data);
-                    }
-                    return data;
-                }
-            }, ]
+            }
+		     ]
         });
     }
 

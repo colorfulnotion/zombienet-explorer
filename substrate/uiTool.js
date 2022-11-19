@@ -521,7 +521,7 @@ module.exports = {
     presentRelayBlock: function(chainID, relayBN) {
         let relayChain = paraTool.getRelayChainByChainID(chainID)
         if (relayChain != "unknown") {
-            return `<a href='/block/${relayChain}/${relayBN}'>${capitalizeFirstLetter(relayChain)}-${relayBN}</a>`
+            return `<a href='/block/0/${relayBN}'>${relayBN}</a>`
         } else {
             return ''
         }

@@ -1673,8 +1673,6 @@ function compute_EVM_BlockHash(h) {
         difficulty, web3.utils.toHex(h.number), web3.utils.toHex(h.gasLimit), gasUsed, web3.utils.toHex(h.timestamp),
         h.extraData, mixHash, nonce
     ]
-    console.log(headerArr)
-    console.log(rlp.encode(headerArr).toString('hex'))
     let blockHash = web3.utils.keccak256(rlp.encode(headerArr))
     return blockHash
 }

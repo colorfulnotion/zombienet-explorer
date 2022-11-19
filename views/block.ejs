@@ -46,9 +46,6 @@ let defHash = "#overview";
   <tr>
     <td><%- include("tooltip", {k: "finalized"}) %>Finalized</td>
     <td><span id="status"><%- include("finalized", {finalized: b.finalized}); %></span>
-    <% if ( uiTool.verifierEnabled() ) { %>
-    <%- include("verifyBlock", {id, blockNumber, obj: b.header}) %>
-    <% } %>
     </td>
   </tr>
   <tr>
@@ -69,17 +66,93 @@ let defHash = "#overview";
       <%- uiTool.getFullHash(b.header.stateRoot); %>
     </td>
   </tr>
+
+
+<% 
+
+if ( b.evmBlock ) { let block = b.evmBlock;
+		console.log("getBlock", b);
+%>
+  <tr>
+    <td><%- include("tooltip", {k: "transactions"}) %>Transactions</td>
+    <td>
+<%
+if ( block.transactions ) { %>
+<a class="btn-sm btn-primary" href='javascript:jumpTab()'><%= block.transactions.length %> transactions</a>
+    <% if ( block.transactionsInternal && ( block.transactionsInternal.length > 0 ) ) { %>
+     and <a class="btn-sm btn-primary" href='javascript:jumpTab("#internal")'><%= block.transactionsInternal.length %> internal transactions</a> in this block
+    <% } %>
+<% } %>
+    <% if ( b.numXCMTransfersOut ) { %>
+    <a class="btn-sm btn-primary" href='/xcmtransfers?chainfilters=<%= id; %>&blockNumber=<%= blockNumber %>'><%= b.numXCMTransfersOut; %> XCM transfers</a>
+    <% } %>
+    <% if ( b.numInternalTxs ) { %>
+    <a class="btn-sm btn-primary" href='/internaltxs/<%= blockNumber %>'><%= b.numInternalTxs %> contract internal txs</a>
+    <% } %>
+    </td>
+  </tr>
+<% if ( block.miner ) { %>
+  <tr>
+    <td><%- include("tooltip", {k: "collator"}) %>By Collator</td>
+    <td>
+        <%- uiTool.presentBlockiesOrIdenticon(block.miner, 25) %>
+        <a href='/address/<%= paraTool.getPubKey(block.miner) %>'>
+          <code><%= block.miner; %></code>
+        </a>
+    </td>
+  </tr>
+<% } %>
+    <tr>
+      <td><%- include("tooltip", {k: "blockgasused"}) %>Gas Used</td>
+      <td>
+        <%= uiTool.presentNumber(block.header.gasUsed); %><%- ` (${uiTool.presentPercentage(block.header.gasUsed/block.header.gasLimit)})` %>
+      </td>
+    </tr>
+    <tr>
+      <td><%- include("tooltip", {k: "blockgaslimit"}) %>Gas Limit</td>
+      <td>
+        <%= uiTool.presentNumber(block.header.gasLimit); %>
+      </td>
+    </tr>
+    <tr>
+      <td><%- include("tooltip", {k: "evmblockhash"}) %>EVM Block Hash</td>
+      <td><%- uiTool.getFullHash(block.evmBlockhash); %></td>
+    </tr>
+    <tr>
+      <td><%- include("tooltip", {k: "evmparenthash"}) %>EVM Block Parent Hash</td>
+      <td><%- uiTool.getFullHash(block.header.parentHash); %></td>
+    </tr>
+    <tr>
+      <td><%- include("tooltip", {k: "evmstateroot"}) %>EVM State Root</td>
+      <td><%- uiTool.getFullHash(block.header.stateRoot); %></td>
+    </tr>
+<% } %>
+<% if ( b.author != undefined && b.miner != undefined && b.author.toLowerCase() != block.miner.toLowerCase()) { %>
+  <tr>
+    <td><%- include("tooltip", {k: "author"}) %>Author</td>
+    <td>
+      <img src="/identicon/<%= b.author; %>" class="rounded-start"  width="25px"  loading="lazy"/>
+      <a href='/address/<%= paraTool.getPubKey(b.author) %>'>
+        <code><%= b.author; %></code>
+      </a>
+       <%- uiTool.showAccountInfo(b, "authorAddress") %>
+     </td>
+  </tr>
+<% } %>
+
+
+
   <% if (b.relayBN && b.relayStateRoot && b.header.stateRoot != b.relayStateRoot){
       let relayParentBlock = `/block/${id}/${b.relayBN}`;
   %>
   <tr>
-    <td><%- include("tooltip", {k: "relayStateRoot"}) %>Relay Parent StateRoot</td>
+    <td><%- include("tooltip", {k: "relayStateRoot"}) %>Relay Chain State Root</td>
     <td>
       <%- uiTool.getFullHash(b.relayStateRoot); %>
     </td>
   </tr>
   <tr>
-    <td><%- include("tooltip", {k: "relayparentnumber"}) %>Relay Parent BN</td>
+    <td><%- include("tooltip", {k: "relayparentnumber"}) %>Relay Chain Block</td>
     <td>
       <%- uiTool.presentRelayBlock(chainID, b.relayBN); %>
     </td>
@@ -113,12 +186,9 @@ let defHash = "#overview";
     </td>
   </tr>
     <% } %>
-    <%
-    if ( b.transactionsConnected ) {
-
-    %>
+    <% if ( b.transactionsConnected && b.transactionsConnected.length > 0 ) { %>
   <tr>
-    <td><%- include("tooltip", {k: "remoteexecutions"}) %># XCM Remote Executions</td>
+    <td><%- include("tooltip", {k: "remoteexecutions"}) %># Remote Executions</td>
     <td>
     <a class="btn-sm btn-primary" href='/xcmtransfers?chainfilters=<%= id; %>&blockNumber=<%= blockNumber %>'><%= b.transactionsConnected.length; %> Remote Executions</a>
     </td>
@@ -156,17 +226,15 @@ let defHash = "#overview";
     <%
     let endpoints = uiTool.getPublicWSEndpoints(chain);
     let polkadotJSURL = `https://polkadot.js.org/apps/?rpc=${encodeURIComponent(endpoints[0])}#/explorer/query/${b.hash}`; %>
-      <a href='<%= polkadotJSURL; %>' target='_new'><img src="https://cdn.polkaholic.io/polkadotjs.svg" width="16"></a>
-      <% if ( chain.subscanURL && false ) {
-         let subscanURL = `${chain.subscanURL}/block/${blockNumber}`;
-         %>
-      <a href='<%- subscanURL; %>' target='_new'><img src="https://cdn.polkaholic.io/subscan.svg" width="16"></a>
-      <% } %>
-
+    <a href='<%= polkadotJSURL; %>' target='_new'><img src="https://cdn.polkaholic.io/polkadotjs.svg" width="16"></a>
+    </td>
   </tr>
-
 </table>
 </div>
+
+
+
+
 
 <div class="tab-pane" id="extrinsics" role="tabpanel" aria-labelledby="extrinsics-tab">
   <div class="form-check form-switch" style="float: right; padding: 20px">
@@ -230,21 +298,21 @@ for (const extrinsic of extrinsics) {
    let extrinsicEventIndex = 0; // this is the eventIndex within the extrinsic
    let signed = ( ( extrinsic.signer == undefined ) || ( extrinsic.evm ) ) ? false : true;
    if ( signed ) totalSubstrateSignedExtrinsics++;
-   //if ( signed ) totalEvents+=extrinsic.events.length;
    for (const e of extrinsic.events) {
         let pieces = e.eventID.split('-') //2-12039596-1-1
         e.rawEventID = `${pieces[1]}-${pieces[3]}`
         e.extrinsicID = extrinsic.extrinsicID
         e.extrinsicHash = extrinsic.extrinsicHash
         e.extrinsicEventIndex = extrinsicEventIndex
-	    e.signed = signed;
-	    extrinsicEventIndex++
-        //if ( signed ) totalEvents++
+	e.signed = signed;
+	extrinsicEventIndex++
+        if ( signed ) totalEvents++
         if (e.section == 'system' && (e.method == 'ExtrinsicSuccess' || e.method == 'ExtrinsicFailed')){
-        }else{
+
+        } else {
             totalEvents++
         }
-	    events.push(e);
+	events.push(e);
    }
 }
 document.getElementById('extrinsics-tab').innerHTML = `Extrinsics (${totalSubstrateSignedExtrinsics})`;

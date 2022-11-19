@@ -131,11 +131,9 @@ function decorateOpt(req, section = null) {
 app.get('/', async (req, res) => {
     console.log("1111");
     try {
-        let chains = await query.get_chains_external();
-	console.log(chains);
+        let chains = await query.getChains();
         if (chains) {
             res.write(JSON.stringify(chains));
-
             return res.end();
         } else {
             return res.sendStatus(404);
@@ -151,7 +149,7 @@ app.get('/', async (req, res) => {
 // Usage: http://api.polkaholic.io/chains
 app.get('/chains', async (req, res) => {
     try {
-        let chains = await query.get_chains_external();
+        let chains = await query.getChains();
         if (chains) {
             res.write(JSON.stringify(chains));
             return res.end();

@@ -27,12 +27,12 @@ module.exports = class Indexer extends AssetManager {
     readyToCrawlParachains = false;
 
     hashesRowsToInsert = [];
-    evmTxRowsToInsert = [];
+
     blockRowsToInsert = [];
     addressStorage = {};
     historyMap = {};
     addressExtrinsicMap = {};
-    pendingExtrinsic = {};
+
 
     nonCompliantLP = {};
     unhandledTraceMap = {};
@@ -79,19 +79,10 @@ module.exports = class Indexer extends AssetManager {
     recentXcmMsgs = []; //will flush from here.
     numXCMMessagesIn = {};
     numXCMMessagesOut = {};
-    // bqlog
-    extrinsicsfn = false;
-    transfersfn = false;
-    eventsfn = false;
-    evmtxsfn = false;
-    xcmfn = false;
-    bqlogindexTS = 0;
+
     recentExtrinsics = [];
     recentTransfers = [];
 
-    xcmMeta = []; //this should be removed after every block
-
-    xcmMetaMap = {};
     isRelayChain = false;
 
     wasmContractMap = {};
@@ -133,56 +124,9 @@ module.exports = class Indexer extends AssetManager {
         }
     }
 
-    timeStat = {}
-    /*
-    timeStat = {
-        getRows: 0,
-        getRuntimeVersion: 0,
-        immediateFlush: 0,
-        indexJmp: 0,
-        getRowsTS: 0,
-        processExtrinsic: 0,
-        buildBlockFromRow: 0,
-        indexChainBlockRow: 0,
-        decodeRawBlock: 0,
-        processBlockEvents: 0,
-        processTrace: 0,
-        getRuntimeVersionTS: 0,
-        processExtrinsicTS: 0,
-        buildBlockFromRowTS: 0,
-        decodeRawBlockTS: 0,
-        processBlockEventsTS: 0,
-        processTraceTS: 0,
-        indexChainBlockRowTS: 0,
-        immediateFlushTS: 0,
-        indexJmpTS: 0,
-        flush_a_TS: 0,
-        flush_b_TS: 0,
-        flush_c_TS: 0,
-        flush_d_TS: 0,
-        flush_e_TS: 0,
-        flush_f_TS: 0,
-        processERC20LPTS: 0,
-        processERC20TS: 0,
-    }
-    */
 
     assetStat = {}
     assetChainMap = {}
-    /*
-      assetTypeERC20: [],
-      assetTypeToken: [],
-      assetTypeLoan: [],
-      assetTypeLiquidityPair: [],
-      assetTypeERC20LiquidityPair: [],
-      assetTypeNFTToken: [],
-      assetTypeNFT: [],
-      assetTypeERC721: [],
-      assetTypeERC721Token: [],
-      assetTypeERC1155: [],
-      assetTypeERC1155Token: [],
-      assetTypeContract: [],
-    */
 
     debugParseTraces = {}
     failedParseTraces = []
@@ -234,10 +178,6 @@ module.exports = class Indexer extends AssetManager {
         this.logger.warn(obj);
     }
 
-    resetErrorWarnings(){
-        this.numIndexingErrors = 0
-        this.numIndexingWarns = 0
-    }
     setParentRelayAndManager(relayCrawler, manager) {
         if (this.debugLevel >= paraTool.debugTracing) console.log(`[${this.chainID}:${this.chainName}] setParentRelayAndManager`)
         this.parentRelayCrawler = relayCrawler
@@ -413,64 +353,42 @@ module.exports = class Indexer extends AssetManager {
         }
     }
 
-
-    updateAddressExtrinsicStorage(address, extrinsicID, extrinsicHash, family, rec, ts, finalized) {
-        if (address == undefined || typeof address != "string") {
-            console.log("updateAddressExtrinsicStorage FAIL", address, extrinsicID, extrinsicHash, family, rec, ts, finalized);
+    async updateAddressExtrinsicStorage(address, extrinsicID, extrinsicHash, family, rec, ts, finalized) {
+        if (address == undefined || typeof address != "string" || extrinsicID == undefined) {
+            return;
         }
-        //feed:extrinsicHash#chainID-extrinsicID
-        //feedxcm:extrinsicHash#chainID-extrinsicID-transferIndex
-        //feedtransfer:extrinsicHash#eventID
-        //feedreward:extrinsicHash#eventID
-        //feedcrowdloan:extrinsicHash#eventID
-        if (extrinsicID == undefined) return //safety check
         let k = `${address}#${extrinsicHash}`;
         let x = JSON.stringify(rec);
-        //MK: let's process long msgs anyway
-        if (x.length > 65535) {
-            let prevLen = x.length
-            if (rec.events) {
-                let eventLen = JSON.stringify(rec.events).length
-                //rec.events = []
-                console.log(`Warning: [${extrinsicID}] ${k}, ${family} too long!(length=${prevLen}, eventLen=${eventLen}, withoutEventlen=${prevLen-eventLen}, finalized=${finalized})`)
-            }
-            //x = JSON.stringify(rec);
-            //if (x.length > 65535) return;
-        }
         let eventID = (rec.eventID != undefined) ? rec.eventID : `${this.chainID}-${extrinsicID}`
         let columnfamily = family;
         switch (family) {
-            case "feed":
-            case "feedtransfer":
+            case "feed": //feed:extrinsicHash#chainID-extrinsicID
+            case "feedtransfer": //feedtransfer:extrinsicHash#eventID
                 if (!finalized) {
                     columnfamily = family + "unfinalized";
                 }
                 break;
-            case "feedxcm":
+            case "feedxcm": //feedxcm:extrinsicHash#chainID-extrinsicID-transferIndex
                 let transferIndex = (rec.transferIndex != undefined) ? rec.transferIndex : 0
                 eventID = `${this.chainID}-${extrinsicID}-${transferIndex}` // to support multi-transfer case
                 break;
-            case "feedcrowdloan":
-            case "feedreward":
+            case "feedcrowdloan": //feedcrowdloan:extrinsicHash#eventID
+            case "feedreward": //feedreward:extrinsicHash#eventID
                 if (!finalized) {
                     return;
                 }
                 break;
         }
-        if (this.addressExtrinsicMap[k] == undefined) {
-            this.addressExtrinsicMap[k] = {
-                address,
-                ts,
-                extrinsicID,
-                extrinsicHash,
-                data: {}
-            }
-        }
-        if (this.addressExtrinsicMap[k].data[columnfamily] == undefined) {
-            this.addressExtrinsicMap[k].data[columnfamily] = {}
-        }
-        this.addressExtrinsicMap[k].data[columnfamily][eventID] = x
-        //console.log(`this.addressExtrinsicMap[${k}] dataLen=${Object.keys(this.addressExtrinsicMap[k].data).length}`, `[${columnfamily}]`,this.addressExtrinsicMap[k].data[columnfamily]);
+
+        console.log("updateAddressExtrinsicStorage", k, columnfamily);
+	let vals = ["data", "ts"];
+        await this.upsertSQL({
+            "table": "addressextrinsic",
+            "keys": ["address", "extrinsicID", "eventID", "family"],
+            "vals": vals,
+            "data": [`('${address}', '${extrinsicID}', '${eventID}', '${columnfamily}', '${ts}', ${mysql.escape(x)})`],
+            "replace": vals
+        });
     }
 
     validAssetState(s, max = 1000000000) {
@@ -530,35 +448,23 @@ module.exports = class Indexer extends AssetManager {
         newState.genTS = this.getCurrentTS();
 
         let accKey = account.toLowerCase();
-        if (!this.addressStorage[accKey]) {
-            this.addressStorage[accKey] = {}
-            this.stat.addressStorage.uniqueAddr++
-        }
-        this.numUpdated++;
 
         // record the assetholder
         this.updateAssetHolder(assetChain, accKey, bn, newState);
-        let rec = {
-            value: JSON.stringify(newState),
-            timestamp: ts * 1000000
-        }
+
         // encodeAssetChain turns : into ~~
         let assetChainEncoded = paraTool.encodeAssetChain(assetChain)
-        this.addressStorage[accKey][assetChainEncoded] = rec
+        console.log("updateAddressStorage", accKey, assetChainEncoded, ts, rec, JSON.stringify(newState))
 
         // ex: {"Token":"KSM"}#2#0x000b3563
         let historyKey = paraTool.make_addressHistory_rowKey(accKey, ts)
-        if (this.historyMap[historyKey] == undefined) {
-            this.historyMap[historyKey] = {};
-        }
-        this.historyMap[historyKey][assetChainEncoded] = rec
         // The above enables access to an account history for all assets like this:
         // 1. For all assetChains, get "realtime" columns -- each column will have the LATEST state of the account's holding of assetChain, eg {"Token":"KSM"}#2
         // 2. For each assetChain, HISTORICAL info can be obtained with a prefix read  ${address}#{"Token":"KSM"}#2#0x12344321 ...
         //  where each cell will be specific time and it is in reverse chronilogical order
         return (true);
     }
-    
+
     // getSpecVersionMetadata returns a cached metadata object OR fetches from SQL table OR does a RPC call and updates this.storageKeys using the "pallets"
     async getSpecVersionMetadata(chain, specVersion, blockHash = false, bn = 0) {
         let chainID = chain.chainID;
@@ -640,210 +546,21 @@ module.exports = class Indexer extends AssetManager {
             await this.update_batchedSQL()
         }
         return (this.metadata[specVersion]);
-
-    }
-
-    resetTimeUsage() {
-        let newTimeStat = {
-            getRows: 0,
-            getRuntimeVersion: 0,
-            immediateFlush: 0,
-            indexJmp: 0,
-            getRowsTS: 0,
-            buildBlockFromRow: 0,
-            indexChainBlockRow: 0,
-            decodeRawBlockApiAt: 0,
-            decodeRawBlockSignedBlock: 0,
-            decodeRawBlock: 0,
-            processBlockEvents: 0,
-            processExtrinsic: 0,
-            processBlockAndReceipt: 0,
-            processEVMFullBlock: 0,
-            processTrace: 0,
-            getRuntimeVersionTS: 0,
-            decodeRawBlockApiAtTS: 0,
-            decodeRawBlockSignedBlockTS: 0,
-            placeholder0c: '---- ---- ---- ---- ---- ---',
-            processTransasctionTS: 0,
-            processReceiptTS: 0,
-            decorateTxnTS: 0,
-            placeholder0a: '---- processBlockEvents- ---',
-            processExtrinsicTS: 0,
-            processBlockAndReceiptTS: 0,
-            processEVMFullBlockTS: 0,
-            placeholder0b: '---- ---- ---- ---- ---- ---',
-            placeholder1a: '---- indexChainBlockRow ----',
-            buildBlockFromRowTS: 0,
-            decodeRawBlockTS: 0,
-            processBlockEventsTS: 0,
-            processTraceTS: 0,
-            indexChainBlockRowTS: 0,
-            placeholder1b: '---- ---- ---- ---- ---- ---',
-            immediateFlushTS: 0,
-            indexJmpTS: 0,
-            flush_a_TS: 0,
-            flush_b_TS: 0,
-            flush_c_TS: 0,
-            flush_d_TS: 0,
-            flush_e_TS: 0,
-            flush_f_TS: 0,
-            processERC20LPTS: 0,
-            processERC20TS: 0,
-        }
-        this.timeStat = newTimeStat
-    }
-
-    showTimeUsage() {
-        if (this.debugLevel >= paraTool.debugTracing) console.log(this.timeStat)
-    }
-
-    showCurrentMemoryUsage() {
-        const used = process.memoryUsage().heapUsed / 1024 / 1024;
-        if (this.debugLevel >= paraTool.debugVerbose) {
-            console.log(`USED: [${used}MB]`, "hashesRowsToInsert.length", this.hashesRowsToInsert.length, "blockRowsToInsert.length", this.blockRowsToInsert.length);
-            console.log(this.stat);
-        }
-    }
-
-    // also send xcmtransfer ws msg
-    async immediateFlushBlockAndAddressExtrinsics(isTip = false) {
-        //flush table that are not dependent on each other and can be promised immediately ()
-        var statusesPromise = Promise.allSettled([
-            this.flushHashesRows(),
-            this.flushBlockRows(),
-            this.flush_addressExtrinsicMap(),
-            this.flushProxy(),
-            this.flushWasmContracts(),
-            this.flush_evmcontractMap(),
-            await this.flushXCM(isTip)
-        ])
-        await statusesPromise
-        this.resetHashRowStat()
     }
 
     async flush(ts = false, lastBlockNumber = 1, isFullPeriod = false, isTip = false) {
-        if (ts == false) {
-            console.log("FLUSHSHORT FAILURE: MISSING ts")
-        }
-        this.showCurrentMemoryUsage()
-
-        let immediateFlushStartTS = new Date().getTime();
-        await this.immediateFlushBlockAndAddressExtrinsics(isTip)
-        let immediateFlushTS = (new Date().getTime() - immediateFlushStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(f): immediate Flush Block&AddressExtrinsics", immediateFlushTS);
-        this.timeStat.flush_f_TS += immediateFlushTS
-        this.timeStat.immediateFlushTS += immediateFlushTS
-
-        let addressStorageStartTS = new Date().getTime();
-        try {
-            await Promise.all([this.flush_addressStorage(), this.flushCrowdloans()]);
-        } catch (err) {
-            this.log_indexing_error(err, "flush");
-        }
-        let addressStorageTS = (new Date().getTime() - addressStorageStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(a): AddressStorage", addressStorageTS);
-        this.timeStat.flush_a_TS += addressStorageTS
-
-        let assetStartTS = new Date().getTime();
-        await this.flush_assets(ts, lastBlockNumber, isFullPeriod, isTip);
-
-        let assetTS = (new Date().getTime() - assetStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(b): Assets", assetTS);
-        this.timeStat.flush_b_TS += assetTS
-
-        let multisigListStartTS = new Date().getTime();
-        await this.flushMultisig();
-        let multisigListTS = (new Date().getTime() - multisigListStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(+): Multisig", multisigListTS);
-
-        // writes to mysql
-        let assetHolderStartTS = new Date().getTime();
+        await this.flushProxy()
+        await this.flushWasmContracts()
+        await this.flush_evmcontractMap()
+        await this.flushXCM(isTip);
+        await this.flushCrowdloans()
+        //await this.flush_assets(ts, lastBlockNumber, isFullPeriod, isTip);
+       await this.flushMultisig();
         await this.flushAssetHolder();
-        let assetHolderTS = (new Date().getTime() - assetHolderStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(c): Assets Holder", assetHolderTS);
-        this.timeStat.flush_c_TS += assetHolderTS
-
-        let batchedSQLStartTS = new Date().getTime();
         await this.update_batchedSQL()
-        let batchedSQLTS = (new Date().getTime() - batchedSQLStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(e): update_batchedSQL", batchedSQLTS);
-
-        let xcmMetaStartTS = new Date().getTime();
-        if (this.isRelayChain) await this.flushXCMMeta(isFullPeriod);
-
-        let xcmMetaTS = (new Date().getTime() - xcmMetaStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(g): flush_xcmMeta", xcmMetaTS);
-
         await this.dump_xcm_messages()
         await this.dump_recent_activity()
-        await this.dump_failed_traces()
-        if (isTip) {
-            await this.dump_addressBalanceRequest();
-        }
-
-        if (isFullPeriod || lastBlockNumber % 3000 == 2998) {
-            if (this.debugLevel >= paraTool.debugInfo) console.log(`unhandledTraceMap`, this.unhandledTraceMap)
-            this.unhandledTraceMap = {}
-        }
-        //removes address state after flushing
-        this.resetAddressStats()
-    }
-
-    async flushXCMMeta(isFullPeriod) {
-        if (!this.isRelayChain) return
-        let xcmMetaMapKeys = Object.keys(this.xcmMetaMap)
-        if (xcmMetaMapKeys.length > 0) {
-            let xcmMetaRecs = [];
-            for (let i = 0; i < xcmMetaMapKeys.length; i++) {
-                let r = this.xcmMetaMap[xcmMetaMapKeys[i]];
-                //["blockNumber"] + ["blockTS", "blockHash", "stateRoot", "xcmMeta"]
-                let xcmMeta = mysql.escape(JSON.stringify(r.xcmMeta))
-                let t = "(" + [`'${r.blockNumber}'`, `'${r.blockTS}'`, `'${r.blockHash}'`, `'${r.stateRoot}'`, mysql.escape(JSON.stringify(r.xcmMeta))].join(",") + ")";
-                xcmMetaRecs.push(t)
-            }
-            let sqlDebug = false
-            this.xcmMetaMap = {};
-            await this.upsertSQL({
-                "table": `xcmmeta${this.chainID}`,
-                "keys": ["blockNumber"],
-                "vals": ["blockTS", "blockHash", "stateRoot", "xcmMeta"],
-                "data": xcmMetaRecs,
-                "replace": ["blockTS", "blockHash", "stateRoot", "xcmMeta"]
-            }, sqlDebug);
-        }
-        //TODO: update indexlog when isFullPeriod?
-    }
-
-    // write this.addressStorage [filled in updateAddressStorage] to tblRealtime
-    async flush_addressStorage() {
-        let batchSize = 512;
-        try {
-            let [tblName, tblRealtime] = this.get_btTableRealtime()
-            let rows = [];
-            // addressStorage
-            for (const address of Object.keys(this.addressStorage)) {
-                let r = this.addressStorage[address];
-                let rowKey = address.toLowerCase()
-                rows.push({
-                    key: rowKey,
-                    data: {
-                        realtime: r
-                    }
-                });
-                if (rows.length > batchSize) {
-                    await this.insertBTRows(tblRealtime, rows, tblName);
-                    rows = [];
-                }
-            }
-            if (rows.length > 0) {
-                await this.insertBTRows(tblRealtime, rows, tblName);
-                rows = [];
-            }
-            this.addressStorage = {}
-            //console.log("writing addressStorage DONE");
-        } catch (err) {
-            this.log_indexing_error(err, "flush_addressStorage");
-        }
+        await this.dump_addressBalanceRequest();
     }
 
     async flushMultisig() {
@@ -932,17 +649,7 @@ module.exports = class Indexer extends AssetManager {
             "data": wasmContracts,
             "replace": wasmContractVal,
         }, sqlDebug);
-        // write wasmcontract to tblRealtime, wasmcode to btHashes
-        if (btRealtime_rows.length > 0) {
-            let [tblName, tblRealtime] = this.get_btTableRealtime()
-            await tblRealtime.insert(btRealtime_rows);
-            console.log("flushWasmContracts btRealtime_rows=", btRealtime_rows.length, btRealtime_rows);
-        }
-        if (btHashes_rows.length > 0) {
-            let [tblName, tblRealtime] = this.get_btTableRealtime()
-            await this.btHashes.insert(btHashes_rows);
-            console.log("flushWasmContracts btHashes_rows=", btHashes_rows.length, btHashes_rows);
-        }
+
     }
 
     async flushProxy() {
@@ -1016,99 +723,32 @@ module.exports = class Indexer extends AssetManager {
 
     }
 
-    async insertBTRows(tbl, rows, tableName = "") {
-	//console.log("insertBTRows", tbl);
-	return;
-/*        if (rows.length == 0) return (true);
-        try {
-            await tbl.insert(rows);
-            return (true);
-        } catch (err) {
-            let succ = true;
-            for (let a = 0; a < rows.length; a++) {
-                try {
-                    let r = rows[a];
-                    if (r.key !== undefined && r.key) {
-                        await tbl.insert([r]);
-                    }
-                } catch (err) {
-                    let tries = 0;
-                    while (tries < 10) {
-                        try {
-                            tries++;
-                            await tbl.insert([rows[a]]);
-                            await this.sleep(100);
-                        } catch (err) {
-                            //console.log(err);
-                        }
-                    }
-                    if (tries >= 10) {
-                        this.log_indexing_warn(err, tableName, rows[a]);
-                        succ = false;
-                    }
-                }
-            }
-            return (succ);
-        } */
+    async insertAccountRealtime(address, assetChain, ts, data) {
+        console.log("insertAccountRealtime", address, assetChain, ts, data);
+        // TODO
+    }
+    /* 
+create table hashes (
+hash varchar(67),
+finalized tinyint default 0, 
+ts int default 0,
+data mediumblob default null,
+primary key (hash)
+);
+*/
+    async insertHash(hash, data, ts, finalized) {
+        //console.log("insertHash", hash, ts, data);
+	let f = finalized ? 1 : 0
+	let out = `('${hash}', '${ts}', ${mysql.escape(data)}, '${f}')`
+	await this.upsertSQL({
+            "table": "hashes",
+            "keys": ["hash"], 
+            "vals": ["ts", "data", "finalized"],
+            "data": [out],
+            "replace": ["data", "finalized"]
+        });
     }
 
-    // write this.addressExtrinsicMap [filled in updateAddressExtrinsicStorage] to btAddressExtrinsic
-    async flush_addressExtrinsicMap() {
-        let batchSize = 8;
-        try {
-            //console.log("writing addressExtrinsicMap");
-            let rows = [];
-            for (const k of Object.keys(this.addressExtrinsicMap)) {
-                let r = this.addressExtrinsicMap[k];
-                //k = address#extrinsicHash
-                // TODO: figure out how to manage contention between 2 concurrent calls to this with locks?
-                if (r !== undefined && r.extrinsicHash !== undefined) {
-                    let extrinsicHash = r.extrinsicHash
-                    //console.log(`k=${k}`, r)
-                    // prepare cells
-
-                    let rowKey = paraTool.make_addressExtrinsic_rowKey(r.address, r.extrinsicHash, r.ts);
-                    //console.log("flush_addressExtrinsicMap", rowKey);
-                    let rec = {};
-                    for (const feedType of Object.keys(r.data)) {
-                        rec[feedType] = {}
-                        for (const eventID of Object.keys(r.data[feedType])) {
-                            let extrinsicHashEventID = `${extrinsicHash}#${eventID}`
-                            //feed:extrinsicHash#chainID-extrinsicID
-                            //feedxcm:extrinsicHash#chainID-extrinsicID-tranferIdx
-                            //feedtransfer:extrinsicHash#eventID
-                            //feedreward:extrinsicHash#eventID
-                            //feedcrowdloan:extrinsicHash#eventID
-                            //console.log(rowKey, rows.length, "feedType", feedType, "length", r.data[feedType][eventID].length);
-                            rec[feedType][extrinsicHashEventID] = {
-                                value: r.data[feedType][eventID], // already in string form
-                                timestamp: r.ts * 1000000
-                            }
-                        }
-
-                    }
-                    let row = {
-                        key: rowKey,
-                        data: rec
-                    }
-                    //console.log(`rkey=${row.key}`, row.data)
-                    rows.push(row);
-                    if (rows.length > batchSize) {
-                        await this.insertBTRows(this.btAddressExtrinsic, rows, "addressextrinsic");
-                        rows = [];
-                    }
-                }
-            }
-            if (rows.length > 0) {
-                await this.insertBTRows(this.btAddressExtrinsic, rows, "addressextrinsic");
-                rows = [];
-            }
-            //console.log("writing addressExtrinsicMap DONE");
-            this.addressExtrinsicMap = {}
-        } catch (err) {
-            this.log_indexing_error(err, "flush_addressExtrinsicMap");
-        }
-    }
 
     // write historyMap to tblHistory
     async flush_historyMap() {
@@ -1125,15 +765,14 @@ module.exports = class Indexer extends AssetManager {
                 }
                 rows.push(r);
                 if (rows.length > batchSize) {
-                    await this.insertBTRows(tblHistory, rows, tblName);
+                    await this.insertHistory(rows);
                     rows = [];
                 }
             }
             if (rows.length > 0) {
-                await this.insertBTRows(tblHistory, rows, tblName);
+                await this.insertHistory(rows);
             }
             this.historyMap = {}
-            // console.log("writing historyMap DONE");
         } catch (err) {
             this.log_indexing_error(err, "flush_historyMap");
         }
@@ -1227,27 +866,6 @@ module.exports = class Indexer extends AssetManager {
         }
     }
 
-
-    /*
-    CREATE TABLE `xcmtransfer` (
-    `extrinsicHash` varchar(67) NOT NULL,
-    `extrinsicID` varchar(32) NOT NULL,
-    `chainID` int(11) NOT NULL,
-    `chainIDDest` int(11) NOT NULL,
-    `blockNumber` varchar(67) NOT NULL,
-    `fromAddress` varchar(67),
-    `asset` varchar(80),
-    `blockNumberDest` int,
-    `sourceTS` int,
-    `destTS` int,
-    `amountSent` int(11) NOT NULL,
-    `valueSentUSD` float,
-    `amountReceived` int(11),
-    `valueReceivedUSD` float,
-    `priceUSD` float DEFAULT NULL,
-    PRIMARY KEY (`extrinsicHash`)
-    );
-    */
     async flushXCM(isTip = false) {
         // flush xcmtransfer
         let xcmtransferKeys = Object.keys(this.xcmtransfer)
@@ -1340,43 +958,6 @@ module.exports = class Indexer extends AssetManager {
             }
         }
 
-        let xcmViolationKeys = Object.keys(this.xcmViolation)
-        //console.log(`xcmViolationKeys`, xcmViolationKeys)
-        if (xcmViolationKeys.length > 0) {
-            let xcmViolationRecs = [];
-            for (let i = 0; i < xcmViolationKeys.length; i++) {
-                let v = this.xcmViolation[xcmViolationKeys[i]];
-                let chainIDDest = (v.chainIDDest != undefined) ? `'${v.chainIDDest}'` : `NULL`
-                let errorcase = (v.errorcase != undefined && v.errorcase != "") ? `'${v.errorcase}'` : `NULL`
-                //MK: send violation here
-                if (isTip) {
-                    //console.log(`[Delay=${this.chainParser.parserBlockNumber-v.sourceBlocknumber}]  send xcmViolation [${this.chainID}-${v.sourceBlocknumber}] (instructionHash:${v.instructionHash}), isTip=${isTip}`)
-                }
-                //["chainID", "instructionHash", "sourceBlocknumber"]
-                //["chainIDDest", "violationType", "parser", "caller", "errorcase", "instruction", "sourceTS", "indexDT"]
-                let t = "(" + [`'${v.chainID}'`, `'${v.instructionHash}'`, `'${v.sourceBlocknumber}'`,
-                    chainIDDest, `'${v.violationType}'`, `'${v.parser}'`, `'${v.caller}'`, errorcase, `'${v.instruction}'`, `'${v.sourceTS}'`, `Now()`
-                ].join(",") + ")";
-                xcmViolationRecs.push(t);
-            }
-            this.xcmViolation = {};
-            let sqlDebug = true
-            try {
-                // these events we can't say for sure without matching to recent sends
-                if (xcmViolationRecs.length > 0) {
-                    let vals = ["chainIDDest", "violationType", "parser", "caller", "errorcase", "instruction", "sourceTS", "indexDT"]
-                    await this.upsertSQL({
-                        "table": "xcmViolation",
-                        "keys": ["chainID", "instructionHash", "sourceBlocknumber"],
-                        "vals": vals,
-                        "data": xcmViolationRecs,
-                        "replace": vals
-                    }, sqlDebug);
-                }
-            } catch (err1) {
-                console.log(err1);
-            }
-        }
     }
 
     fixOutgoingUnknownSentAt(sentAt) {
@@ -1390,79 +971,6 @@ module.exports = class Indexer extends AssetManager {
         this.xcmmsgSentAtUnknownMap = {}
     }
 
-    sendManagerStat(numIndexingErrors, numIndexingWarns, elapsedSeconds){
-        //if (this.debugLevel >= paraTool.debugTracing) console.log(`sendManagerStat numIndexingErrors=${numIndexingErrors}, numIndexingWarns=${numIndexingWarns}, elapsedSeconds=${elapsedSeconds}`)
-        if (!this.parentManager) return
-        if (numIndexingErrors >= 0 && numIndexingWarns >= 0){
-            let m = {
-                blockHash: this.chainParser.parserBlockHash,
-                blockTS: this.chainParser.parserTS,
-                blockBN: this.chainParser.parserBlockNumber,
-                numIndexingErrors: numIndexingErrors,
-                numIndexingWarns: numIndexingWarns,
-                elapsedTS: elapsedSeconds,
-            }
-            let wrapper = {
-                type: "stat",
-                msg: m,
-                chainID: this.chainID,
-                source: this.hostname,
-                commit: this.indexerInfo,
-            }
-            if (this.debugLevel >= paraTool.debugTracing) console.log(`[${this.chainID}:${this.chainName}] sendManagerStat`, wrapper)
-            this.parentManager.sendManagerStat(this.chainID, wrapper)
-        }
-    }
-
-    sendManagerMessage(m, msgType = null, finalized = false) {
-        if (!this.parentManager) {
-            //if (this.debugLevel >= paraTool.debugVerbose) console.log(`[${this.chainID}:${this.chainName}] parentManager not set`)
-            return
-        }
-        if (msgType == undefined) msgType = 'Unknown'
-        let wrapper = {
-            type: msgType,
-            msg: m,
-            blockHash: this.chainParser.parserBlockHash,
-            blockTS: this.chainParser.parserTS,
-            blockBN: this.chainParser.parserBlockNumber,
-            relayBN: this.chainParser.parserWatermark,
-            relayStateRoot: this.chainParser.relayParentStateRoot,
-            relayChain: this.relayChain,
-            finalized: finalized,
-            source: this.hostname,
-            commit: this.indexerInfo,
-        }
-        if (this.debugLevel >= paraTool.debugTracing) console.log(`[${this.chainID}:${this.chainName}] sendManagerMessage`, wrapper)
-        this.parentManager.sendManagerMessage(this.chainID, wrapper)
-    }
-
-    sendWSMessage(m, msgType = null, finalized = false) {
-        if (msgType == undefined) msgType = 'Unknown'
-        let wrapper = {
-            type: msgType,
-            msg: m,
-            blockHash: this.chainParser.parserBlockHash,
-            blockTS: this.chainParser.parserTS,
-            blockBN: this.chainParser.parserBlockNumber,
-            relayBN: this.chainParser.parserWatermark,
-            relayStateRoot: this.chainParser.relayParentStateRoot,
-            relayChain: this.relayChain,
-            finalized: finalized,
-            source: this.hostname,
-            commit: this.indexerInfo,
-        }
-        const endpoint = "ws://kusama-internal.polkaholic.io:9101"
-        try {
-            const ws = new WebSocket(endpoint);
-            ws.on('error', function error() {})
-            ws.on('open', function open() {
-                ws.send(JSON.stringify(wrapper));
-            });
-        } catch (err) {
-
-        }
-    }
 
     //this is the xcmmessages table
     updateXCMMsg(xcmMsg, overwrite = false) {
@@ -1731,10 +1239,6 @@ module.exports = class Indexer extends AssetManager {
         }
         this.xcmtransfer[`${xcmtransfer.extrinsicHash}-${xcmtransfer.transferIndex}-${xcmtransfer.xcmIndex}`] = xcmtransfer;
         this.sendManagerMessage(xcmtransfer, "xcmtransfer", finalized);
-        if (isTip) {
-            //console.log(`[Delay=${this.chainParser.parserBlockNumber - xcmtransfer.blockNumber}] send xcmtransfer ${xcmtransfer.extrinsicHash} (msgHash:${xcmtransfer.msgHash}), isTip=${isTip}`)
-            this.sendWSMessage(xcmtransfer, "xcmtransfer", finalized);
-        }
     }
 
     // sets up xcmtransferdestcandidate inserts, which are matched to those in xcmtransfer when we writeFeedXCMDest
@@ -1753,10 +1257,6 @@ module.exports = class Indexer extends AssetManager {
         }
         //MK: send xcmtransfer here
         this.sendManagerMessage(candidate, "xcmtransferdestcandidate", finalized);
-        if (isTip) {
-            //console.log(`[Delay=${this.chainParser.parserBlockNumber - candidate.blockNumberDest}] send xcmtransferdestcandidate [${candidate.eventID}] (msgHash:${candidate.msgHash}), isTip=${isTip}`)
-            this.sendWSMessage(candidate, "xcmtransferdestcandidate", finalized);
-        }
     }
 
     // update xcmViolation
@@ -1788,21 +1288,7 @@ module.exports = class Indexer extends AssetManager {
     knownParaID(paraID) {
         return this.paraIDs.includes(paraID);
     }
-    /*
-    CREATE TABLE `crowdloan` (
-    `extrinsicHash` varchar(67) NOT NULL,
-    `extrinsicID` varchar(32) NOT NULL,
-    `chainID` int(11) NOT NULL,
-    `blockNumber` varchar(67) NOT NULL,
-    `ts` int,
-    `action` varchar(80),
-    `fromAddress` varchar(67),
-    `amount` float,
-    `memo` varchar(4096),
-    `remark` varchar(4096),
-    PRIMARY KEY (`extrinsicHash`)
-    );
-    */
+
     async flushCrowdloans() {
         // flush this.crowdloan into "crowdloan"
         let crowdloanKeys = Object.keys(this.crowdloan)
@@ -1841,8 +1327,6 @@ module.exports = class Indexer extends AssetManager {
     updateCrowdloanStorage(crowdloan) {
         this.crowdloan[crowdloan.extrinsicHash] = crowdloan;
     }
-
-
 
     async processAssetTypeERC20LiquidityPair(web3Api, chainID, assetChain, ts = false, blockNumber = false, isFullPeriod = false) {
         let [asset, _] = paraTool.parseAssetChain(assetChain);
@@ -1983,10 +1467,6 @@ module.exports = class Indexer extends AssetManager {
     }
 
     async processAssetTypeERC20(web3Api, chainID, assetChain, ts = false, blockNumber = false, isFullPeriod = false, isTip = false) {
-        //console.log(`processAssetTypeERC20 called [${blockNumber}], assetChain=${assetChain}, isFullPeriod=${isFullPeriod}, isTip=${isTip}`)
-        //let web3Api = this.web3Api
-        //let chainID = this.chainID;
-
         // we will update total supply once per index_period
         if (!isTip) {
             return false; // hourly update by other process
@@ -2134,615 +1614,6 @@ module.exports = class Indexer extends AssetManager {
         }
     }
 
-    async flush_assets(ts = false, blockNumber = false, isFullPeriod = false, isTip = false) {
-        if (!ts) ts = Math.floor(Date.now() / 1000)
-        let ats = ts * 1000000;
-
-        // for all this.assetList, write to asset; mysql address table
-        if (isTip) {
-            //console.log(`flush_assets [${blockNumber}], ts=${ts}, isFullPeriod=${isFullPeriod}, isTip=${isTip}`)
-        }
-        let chainID = this.chainID;
-        let web3Api = this.web3Api;
-
-        var erc20s = [];
-        var tokens = [];
-
-        var erc721classes = [];
-        var erc721tokens = [];
-        var erc1155classes = [];
-        var erc1155tokens = [];
-        var contracts = [];
-        let assetlogLiquidityPairs = [];
-        let assetlogTokensIssuance = [];
-        let assetlogTokensPrice = [];
-        let assetlogLoans = [];
-        let assetlogCDPs = [];
-
-        for (const assetChain of Object.keys(this.tallyAsset)) {
-            let assetInfoType = this.tallyAsset[assetChain].assetType;
-            let lastTouchedBn = this.tallyAsset[assetChain].blockNumber
-            if (this.assetChainMap[assetInfoType] == undefined) {
-                this.assetChainMap[assetInfoType] = []
-                this.assetStat[assetInfoType] = 0
-            }
-            this.assetChainMap[assetInfoType].push(assetChain)
-            this.assetStat[assetInfoType]++
-        }
-
-        // console.log(`assetStat`, this.assetStat, `assetChainMap`, this.assetChainMap)
-
-        let erc20LPPromise = false,
-            erc20Promise = false
-
-        for (const assetType of Object.keys(this.assetChainMap)) {
-            //potential batch all erc call parallel
-            let assetChains = this.assetChainMap[assetType]
-            //console.log(`${assetType} len=${assetChains.length}`, assetChains)
-            //console.log(`${assetChains}`)
-            switch (assetType) {
-                case paraTool.assetTypeERC20:
-                    if (isTip) {
-                        //console.log(`${assetType} len=${assetChains.length}`, assetChains)
-                    }
-                    erc20Promise = await assetChains.map(async (assetChain) => {
-                        try {
-                            return this.processAssetTypeERC20(web3Api, chainID, assetChain, ts, blockNumber, isFullPeriod, isTip)
-                        } catch (err) {
-                            console.log(`processAssetTypeERC20 ${assetChain}`, err)
-                            return false
-                        }
-                    });
-                    break;
-                case paraTool.assetTypeToken:
-                    break;
-                case paraTool.assetTypeLoan:
-                    break;
-                case paraTool.assetTypeLiquidityPair:
-                    break;
-                case paraTool.assetTypeERC20LiquidityPair:
-                    erc20LPPromise = await assetChains.map(async (assetChain) => {
-                        try {
-                            return this.processAssetTypeERC20LiquidityPair(web3Api, chainID, assetChain, ts, blockNumber, isFullPeriod)
-                        } catch (err) {
-                            console.log(`processAssetTypeERC20LiquidityPair ${assetChain}`, err)
-                            return false
-                        }
-                    });
-                    break;
-                case paraTool.assetTypeNFTToken:
-                    break;
-                case paraTool.assetTypeNFT:
-                    break;
-                case paraTool.assetTypeERC721:
-                    break;
-                case paraTool.assetTypeERC721Token:
-                    break;
-                case paraTool.assetTypeERC1155:
-                    break;
-                case paraTool.assetTypeERC1155Token:
-                    break;
-                case paraTool.assetTypeContract:
-                    break;
-                case paraTool.assetTypeCDP:
-                    break;
-                default:
-                    console.log("TODO: flush - unknown assetType", assetType);
-                    break;
-            }
-        }
-
-        if (erc20LPPromise) {
-            let erc20LPPromiseStartTS = new Date().getTime();
-            var erc20LPList = await Promise.allSettled(erc20LPPromise)
-            let erc20LPPromisTS = (new Date().getTime() - erc20LPPromiseStartTS) / 1000
-            if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(b) - erc20LP", erc20LPPromisTS);
-            this.timeStat.processERC20LPTS += erc20LPPromisTS
-            for (const erc20LPRes of erc20LPList) {
-                if (erc20LPRes['status'] == 'fulfilled') {
-                    if (erc20LPRes['value']) {
-                        assetlogLiquidityPairs.push(erc20LPRes['value'])
-                    }
-                } else {
-                    console.log(`error`, erc20LPRes)
-                }
-            }
-        }
-
-        if (erc20Promise) {
-            let erc20PromiseStartTS = new Date().getTime();
-            var erc20List = await Promise.allSettled(erc20Promise)
-            let erc20PromisTS = (new Date().getTime() - erc20PromiseStartTS) / 1000
-            if (this.debugLevel >= paraTool.debugVerbose) console.log("flush(b) - erc20", erc20PromisTS);
-            this.timeStat.processERC20TS += erc20PromisTS
-
-            for (const erc20Res of erc20List) {
-                if (erc20Res['status'] == 'fulfilled') {
-                    if (erc20Res['value']) {
-                        erc20s.push(erc20Res['value'])
-                    }
-                } else {
-                    console.log(`error`, erc20Res)
-                }
-            }
-
-            if (isTip) {
-                // reset tip here so we don't wastefully calling the total supply in next block
-                this.resetTipAssetTally()
-            }
-        }
-
-        for (const assetChain of Object.keys(this.tallyAsset)) {
-            //need to generate revered pairKey in order to final volume
-            let [asset, _] = paraTool.parseAssetChain(assetChain);
-            let assetInfo = this.tallyAsset[assetChain];
-
-            switch (assetInfo.assetType) {
-                // process both normal erc20 (non-lp token) and erc20LP token info
-                case paraTool.assetTypeERC20:
-                    break;
-
-                case paraTool.assetTypeToken: {
-                    let issuance = assetInfo.issuance;
-                    tokens.push(`('${asset}', '${chainID}', '${assetInfo.assetType}', '${issuance}', FROM_UNIXTIME('${ts}'), '${blockNumber}' )`); // *** REVIEW assetType here
-                    if (isFullPeriod) {
-                        let updIssuance = false
-                        let updPrice = false
-                        let r = {
-                            issuance: 0,
-                            price: 0,
-                            source: null,
-                        };
-                        if (assetInfo.issuance) {
-                            r.issuance = assetInfo.issuance;
-                            assetInfo.issuance = 0;
-                            updIssuance = true;
-                        }
-                        if (assetInfo.price) {
-                            r.price = assetInfo.price;
-                            updPrice = true;
-                        }
-                        if (updIssuance) {
-                            let o1 = `('${asset}', '${this.chainID}', '${ts}', '${paraTool.assetSourceOnChain}','${r.issuance}')`
-                            if (this.debugLevel >= paraTool.debugInfo) console.log(`paraTool.assetTypeToken[${paraTool.assetSourceOnChain}] ${assetChain}`, o1)
-                            if (this.validAsset(asset, this.chainID, assetInfo.assetType, o1)) {
-                                assetlogTokensIssuance.push(o1)
-                            }
-                        }
-                        if (updPrice) {
-                            let o2 = `('${asset}', '${this.chainID}', '${ts}', '${paraTool.assetSourceOracle}','${r.price}')`
-                            if (this.debugLevel >= paraTool.debugInfo) console.log(`paraTool.assetTypeToken[${paraTool.assetSourceOracle}] ${assetChain}`, o2)
-                            if (this.validAsset(asset, this.chainID, assetInfo.assetType, o2)) {
-                                assetlogTokensPrice.push(o2)
-                            }
-                        }
-                    }
-                }
-                break;
-
-                case paraTool.assetTypeLoan:
-                    if (isFullPeriod) {
-                        let r = {
-                            issuance: 0,
-                            debitExchangeRate: 0,
-                            source: assetInfo.assetSource,
-                        };
-                        let upd = false;
-                        if (assetInfo.issuance) {
-                            r.issuance = assetInfo.issuance;
-                            assetInfo.issuance = 0;
-                            upd = true;
-                        }
-                        if (assetInfo.debitExchangeRate) {
-                            r.debitExchangeRate = assetInfo.debitExchangeRate;
-                            assetInfo.debitExchangeRate = 0;
-                            upd = true;
-                        }
-                        if (upd) {
-                            let o = `('${asset}', '${this.chainID}', '${ts}', '${r.source}', '${r.issuance}', '${r.debitExchangeRate}')`
-                            if (this.debugLevel >= paraTool.debugInfo) console.log(`Loan`, o)
-                            if (this.validAsset(asset, this.chainID, assetInfo.assetType, o) && this.validDouble(r, assetInfo.assetType, o) && this.validDecimal(r, assetInfo.assetType, o)) {
-                                assetlogLoans.push(o);
-                            }
-                        }
-                    }
-                    break;
-                case paraTool.assetTypeCDP:
-                    if (isFullPeriod) {
-                        let r = {
-                            //issuance: 0,
-                            supplyExchangeRate: 0,
-                            borrowExchangeRate: 0,
-                            source: assetInfo.assetSource,
-                        };
-                        let upd = false;
-                        /*
-                        if (assetInfo.issuance) {
-                            r.issuance = assetInfo.issuance;
-                            upd = true;
-                        }
-                        */
-                        if (assetInfo.supplyExchangeRate && assetInfo.borrowExchangeRate) {
-                            r.supplyExchangeRate = assetInfo.supplyExchangeRate;
-                            r.borrowExchangeRate = assetInfo.borrowExchangeRate;
-                            assetInfo.supplyExchangeRate = 0;
-                            assetInfo.borrowExchangeRate = 0;
-                            upd = true;
-                        }
-                        if (upd) {
-                            let o = `('${asset}', '${this.chainID}', '${ts}', '${r.source}', '${r.supplyExchangeRate}', '${r.borrowExchangeRate}')`
-                            console.log(`CDP`, o)
-                            if (this.validAsset(asset, this.chainID, assetInfo.assetType, o) && this.validDouble(r, assetInfo.assetType, o) && this.validDecimal(r, assetInfo.assetType, o)) {
-                                assetlogCDPs.push(o);
-                            }
-                        }
-                    }
-                    break;
-                case paraTool.assetTypeLiquidityPair:
-                    if (isFullPeriod) {
-                        let r = {
-                            low: 0,
-                            high: 0,
-                            open: 0,
-                            close: 0,
-                            lp0: 0,
-                            lp1: 0,
-                            token0In: 0,
-                            token1In: 0,
-                            token0Out: 0,
-                            token1Out: 0,
-                            token0Volume: 0,
-                            token1Volume: 0,
-                            token0Fee: 0,
-                            token1Fee: 0,
-                            issuance: 0,
-                            source: assetInfo.assetSource,
-                        };
-                        let upd = false;
-
-                        if (assetInfo.rat !== undefined && assetInfo.rat.length > 0) {
-                            r.low = Math.min(...assetInfo.rat);
-                            r.high = Math.max(...assetInfo.rat);
-                            r.open = assetInfo.rat[0];
-                            r.close = assetInfo.rat[assetInfo.rat.length - 1];
-                            upd = true;
-                        }
-                        if (assetInfo.lp0 !== undefined && assetInfo.lp1 !== undefined && assetInfo.lp0.length > 0 && assetInfo.lp1.length > 0) {
-                            r.lp0 = assetInfo.lp0[assetInfo.lp0.length - 1];
-                            r.lp1 = assetInfo.lp1[assetInfo.lp1.length - 1];
-                            upd = true;
-                        }
-                        if (assetInfo.issuance !== undefined) {
-                            r.issuance = assetInfo.issuance;
-                            assetInfo.issuance = 0;
-                        }
-                        if (assetInfo.token0In > 0 || assetInfo.token1In > 0) {
-                            r.token0In = assetInfo.token0In
-                            r.token1In = assetInfo.token1In
-                            r.token0Out = assetInfo.token0Out
-                            r.token1Out = assetInfo.token1Out
-                            r.token0Volume = assetInfo.token0In
-                            r.token1Volume = assetInfo.token1In
-                            r.token0Fee = assetInfo.token0In - assetInfo.token0Out
-                            r.token1Fee = assetInfo.token1In - assetInfo.token1Out
-                            upd = true;
-                        }
-
-                        if (upd) {
-                            this.tallyAsset[assetChain].lp0 = [];
-                            this.tallyAsset[assetChain].lp1 = [];
-                            this.tallyAsset[assetChain].rat = [];
-
-
-                            // clear volume tally
-                            this.tallyAsset[assetChain].token0In = 0;
-                            this.tallyAsset[assetChain].token1In = 0;
-                            this.tallyAsset[assetChain].token0Out = 0;
-                            this.tallyAsset[assetChain].token1Out = 0;
-
-                            //(asset, chainID, indexTS, source, open, close, low, high, lp0, lp1, issuance, token0Volume, token1Volume, state )
-                            let state = JSON.stringify(r)
-                            let o = `('${asset}', '${this.chainID}', '${ts}', '${r.source}', '${r.open}', '${r.close}', '${r.low}', '${r.high}', '${r.lp0}', '${r.lp1}', '${r.issuance}', '${r.token0Volume}', '${r.token1Volume}', '${state}')`
-                            if (this.debugLevel >= paraTool.debugInfo) console.log(`LP update`, o)
-                            if (this.validAsset(asset, this.chainID, assetInfo.assetType, o) && this.validDouble(r, assetInfo.assetType, o) && this.validDecimal(r, assetInfo.assetType, o)) {
-                                assetlogLiquidityPairs.push(o);
-                            }
-                        }
-                        if (assetInfo.isDualAssetTypeToken) {
-                            let issuance = assetInfo.issuance;
-                            if (isFullPeriod) {
-                                let updIssuance = false
-                                let updPrice = false
-                                let r = {
-                                    issuance: 0,
-                                    price: 0,
-                                    source: null,
-                                };
-                                if (assetInfo.issuance) {
-                                    r.issuance = assetInfo.issuance;
-                                    assetInfo.issuance = 0;
-                                    updIssuance = true;
-                                }
-                                if (assetInfo.price) {
-                                    r.price = assetInfo.price;
-                                    updPrice = true;
-                                }
-                                //TODO: add metadata
-                                if (updPrice) {
-                                    let o2 = `('${asset}', '${this.chainID}', '${ts}', '${paraTool.assetSourceOracle}','${r.price}')`
-                                    if (this.debugLevel >= paraTool.debugInfo) console.log(`[DualAssetTypeToken] paraTool.assetTypeToken[${paraTool.assetSourceOracle}] ${assetChain}`, o2)
-                                    if (this.validAsset(asset, this.chainID, assetInfo.assetType, o2)) {
-                                        assetlogTokensPrice.push(o2)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    break;
-                case paraTool.assetTypeERC20LiquidityPair:
-                    /*
-                        let res = await this.processAssetTypeERC20LiquidityPair(web3Api, chainID, assetChain, ts, blockNumber, isFullPeriod)
-                        if (res) {
-                            assetlogLiquidityPairs.push(res)
-                        }
-                    */
-                    break;
-                case paraTool.assetTypeNFTToken: {
-                    let sqlAssetKey = assetInfo.nftClass; // String eg {"NFTClass":3}
-                    let tokenID = assetInfo.tokenID; // String eg {"NFTToken":0}
-                    let holder = assetInfo.holder;
-                    let tokenURI = assetInfo.tokenURI;
-                    let free = assetInfo.free;
-                    let meta = (assetInfo.metadata !== undefined) ? assetInfo.metadata : "";
-
-                    /*
-                      {
-                      assetType: 'NFTToken',
-                      metadata: {
-                      metadata: '0x62616679626569646a6e737675366b62776c6f6b646b636b7670626d6c32696369736f793778776e6d6a346d717062776268676d677635336b7375',
-                      owner: '21t2T25Mc3XxTsqZSz4EyqhsM7LJiKrUKBE26ajwvNGq94w1',
-                      data: { deposit: 235400000000, attributes: {} }
-                      }
-                      }
-                    */
-                    let sql1 = `('${sqlAssetKey}', '${chainID}', '${tokenID}', '${holder}', FROM_UNIXTIME('${ts}'), '${blockNumber}', ${mysql.escape(meta)}, '${tokenURI}', '${free}')`;
-                    if (this.validAsset(sqlAssetKey, chainID, assetInfo.assetType, sql1)) {
-                        erc721tokens.push(sql1);
-                    }
-                }
-                break;
-
-                case paraTool.assetTypeNFT:
-                    /*
-                      {
-                      assetType: 'NFT',
-                      metadata: {
-                      metadata: '0x62616679626569646a6e737675366b62776c6f6b646b636b7670626d6c32696369736f793778776e6d6a346d717062776268676d677635336b7375',
-                      totalIssuance: 1,
-                      owner: '23M5ttkmR6KcnsARyoGv5Ymnr1YYkFMkN6rNMD8Df8BUHcQe',
-                      data: { deposit: 50035400000000, properties: 15, attributes: {} }
-                      }
-                      }
-                    */
-                    var sql = ''; //(asset, chainID, assetType, totalSupply, lastUpdateDT, lastUpdateBN, metadata, lastState, erc721isMetadata, erc721isEnumerable, tokenBaseURI)
-                    if (assetInfo.metadata != undefined) {
-                        //acala nft format unified with erc721
-                        let deposit = assetInfo.deposit ? assetInfo.deposit : 0;
-                        let sqlAssetKey = asset;
-                        let creatorSql = (assetInfo.creator != undefined) ? `'${assetInfo.creator.toLowerCase()}'` : 'NULL';
-                        let createdAtTxSql = (assetInfo.createdAtTx != undefined) ? `'${assetInfo.createdAtTx}'` : 'NULL';
-                        let createDTSql = (assetInfo.createTS != undefined) ? `FROM_UNIXTIME('${assetInfo.createTS}')` : 'NULL'
-                        let creator = (assetInfo.creator != undefined) ? assetInfo.creator.toLowerCase() : null;
-                        let createdAtTx = (assetInfo.createdAtTx != undefined) ? assetInfo.createdAtTx : null;
-
-                        let isEnumerable = (assetInfo.isEnumerable !== undefined && assetInfo.isEnumerable) ? 1 : 0;
-                        let isMetadataSupported = (assetInfo.isMetadataSupported !== undefined && assetInfo.isMetadataSupported) ? 1 : 0;
-                        let metadata = assetInfo.metadata;
-                        let baseURI = (assetInfo.baseURI !== undefined) ? assetInfo.baseURI : "";
-                        let ipfsUrl = (assetInfo.ipfsUrl !== undefined) ? assetInfo.ipfsUrl : "";
-                        let imageUrl = (assetInfo.imageUrl !== undefined) ? assetInfo.imageUrl : "";
-                        let totalSupply = ethTool.validate_bigint(assetInfo.totalIssuance);
-                        // sql will continue using contract address as asset key
-                        let sql = `('${sqlAssetKey}', '${chainID}', '${assetInfo.assetType}', Null, Null, '${totalSupply}', FROM_UNIXTIME('${ts}'), '${blockNumber}', Null , '${isMetadataSupported}', '${isEnumerable}', ${mysql.escape(baseURI)}, ${mysql.escape(ipfsUrl)}, ${mysql.escape(imageUrl)}, ${createDTSql}, ${creatorSql}, ${createdAtTxSql})`;
-                        if (this.validAsset(sqlAssetKey, chainID, assetInfo.assetType, sql)) {
-                            erc721classes.push(sql);
-                        }
-                    }
-                    break;
-                case paraTool.assetTypeERC721:
-                    /*
-                      {
-                      blockNumber: 575292,
-                      tokenAddress: '...',
-                      tokenType: 'ERC721',
-                      isMetadataSupported: true,
-                      isEnumerable: true,
-                      metadata: { name: 'Moon Monkeys', symbol: 'MM', baseURI: null },
-                      totalSupply: '7353',
-                      numHolders: 0
-                      }
-                    */
-                    if (assetInfo.tokenAddress != undefined) {
-                        let sql = '';
-                        //erc721
-                        let sqlAssetKey = assetInfo.tokenAddress.toLowerCase();
-                        let creatorSql = (assetInfo.creator != undefined) ? `'${assetInfo.creator.toLowerCase()}'` : 'NULL';
-                        let createdAtTxSql = (assetInfo.createdAtTx != undefined) ? `'${assetInfo.createdAtTx}'` : 'NULL';
-                        let createDTSql = (assetInfo.createTS != undefined) ? `FROM_UNIXTIME('${assetInfo.createTS}')` : 'NULL'
-                        let creator = (assetInfo.creator != undefined) ? assetInfo.creator.toLowerCase() : null;
-                        let createdAtTx = (assetInfo.createdAtTx != undefined) ? assetInfo.createdAtTx : null;
-
-                        let isEnumerable = (assetInfo.isEnumerable) ? 1 : 0
-                        let isMetadataSupported = (assetInfo.isMetadataSupported) ? 1 : 0
-                        let metadata = assetInfo.metadata
-                        let baseURI = 'Null'
-                        let ipfsUrl = 'Null'
-                        let imageUrl = 'Null'
-                        let totalSupply = ethTool.validate_bigint(assetInfo.totalSupply);
-                        if (isMetadataSupported) {
-                            if (metadata.baseURI != undefined) baseURI = `${metadata.baseURI}`
-                            if (metadata.ipfsUrl != undefined) ipfsUrl = `${metadata.ipfsUrl}`
-                            if (metadata.imageUrl != undefined) imageUrl = `${metadata.imageUrl}`
-                        }
-                        // sql will continue using contract address as asset key
-                        if (isMetadataSupported) {
-                            //(asset, chainID, assetType, assetName, symbol, totalSupply, lastUpdateDT, lastUpdateBN, metadata, erc721isMetadata, erc721isEnumerable, tokenBaseURI, ipfsUrl, imageUrl, createDT, creator, createdAtTx)
-                            sql = `('${sqlAssetKey}', '${chainID}', '${assetInfo.tokenType}', ${mysql.escape(this.clip_string(metadata.name))}, ${mysql.escape(this.clip_string(metadata.symbol))}, '${totalSupply}', FROM_UNIXTIME('${ts}'), '${blockNumber}', ${mysql.escape(JSON.stringify(metadata))},  '${isMetadataSupported}', '${isEnumerable}', '${baseURI}', '${ipfsUrl}', '${imageUrl}', ${createDTSql}, ${creatorSql}, ${createdAtTxSql})`;
-                        } else {
-                            sql = `('${sqlAssetKey}', '${chainID}', '${assetInfo.tokenType}', Null, Null, '${totalSupply}', FROM_UNIXTIME('${ts}'), '${blockNumber}', Null , '${isMetadataSupported}', '${isEnumerable}', ${mysql.escape(baseURI)}, ${mysql.escape(ipfsUrl)}, ${mysql.escape(imageUrl)}, ${createDTSql}, ${creatorSql}, ${createdAtTxSql} )`;
-                        }
-                        if (this.validAsset(sqlAssetKey, chainID, assetInfo.assetType, sql)) {
-                            erc721classes.push(sql);
-                        }
-                    }
-                    break;
-
-                case paraTool.assetTypeERC721Token: {
-                    /*
-                      {
-                      blockNumber: 576837,
-                      tokenAddress: '...',
-                      tokenType: 'ERC721Token',
-                      isMetadataSupported: true,
-                      tokenID: '14700877701539379516299095288040297463165322513409438848687442933988920671445',
-                      tokenURI: 'https://app.domainchain.network/api/nftdomains/metadata/lending.moon',
-                      owner: '0x53Fc1bf99217d981721a52eAbe1A2F39A049aBfb'
-                      }
-                    */
-                    let sqlAssetKey = assetInfo.tokenAddress.toLowerCase();
-                    let erc721TokenID = assetInfo.tokenID
-                    let holder = assetInfo.owner
-                    let tokenURI = assetInfo.tokenURI
-                    let free = 0;
-                    let meta = (assetInfo.metadata != undefined) ? JSON.stringify(assetInfo.metadata) : "";
-                    let sql1 = `('${sqlAssetKey}', '${chainID}', '${erc721TokenID}', '${holder}', FROM_UNIXTIME('${ts}'), '${blockNumber}', ${mysql.escape(meta)}, '${tokenURI}', '${free}')`;
-                    if (this.validAsset(sqlAssetKey, chainID, assetInfo.assetType, sql1)) {
-                        erc721tokens.push(sql1);
-                    }
-                }
-                break;
-                case paraTool.assetTypeERC1155:
-                    break;
-                case paraTool.assetTypeERC1155Token:
-                    break;
-                case paraTool.assetTypeContract:
-                //{"blockNumber":534657,"tokenAddress":"...","tokenType":"ERC20","name":"Stella LP","symbol":"STELLA LP","decimal":"18","totalSupply":142192.4834495356}
-                {
-                    let assetKey = assetInfo.tokenAddress.toLowerCase();
-                    let creatorSql = (assetInfo.creator != undefined) ? `'${assetInfo.creator.toLowerCase()}'` : 'NULL';
-                    let createdAtTxSql = (assetInfo.createdAtTx != undefined) ? `'${assetInfo.createdAtTx}'` : 'NULL';
-                    let createDTSql = (assetInfo.createTS != undefined) ? `FROM_UNIXTIME('${assetInfo.createTS}')` : 'NULL'
-                    let creator = (assetInfo.creator != undefined) ? assetInfo.creator.toLowerCase() : null;
-                    let createdAtTx = (assetInfo.createdAtTx != undefined) ? assetInfo.createdAtTx : null;
-                    let o = `('${assetKey}', '${chainID}', '${assetInfo.assetType}', FROM_UNIXTIME('${ts}'), '${blockNumber}', ${createDTSql}, ${creatorSql}, ${createdAtTxSql})`;
-                    if (this.validAsset(assetKey, chainID, assetInfo.assetType, o)) {
-                        contracts.push(o);
-                    }
-                }
-                break;
-                default:
-                    console.log("TODO: flush - unknown assetType", assetInfo.assetType);
-                    break;
-            }
-        }
-
-        let sqlDebug = (this.debugLevel >= paraTool.debugVerbose) ? true : false
-        // ---- asset: erc20s,
-        await this.upsertSQL({
-            "table": "asset",
-            "keys": ["asset", "chainID"],
-            "vals": ["assetType", "assetName", "symbol", "lastState", "decimals", "totalSupply", "lastUpdateDT", "lastUpdateBN", "createDT", "creator", "createdAtTx",
-                "token0", "token1", "token0Decimals", "token1Decimals", "token0Supply", "token1Supply", "token0Symbol", "token1Symbol"
-            ], // add currencyID
-            "data": erc20s,
-            "replace": ["assetType", "assetName", "symbol", "decimals", "token0", "token1", "token0Decimals", "token1Decimals", "token0Symbol", "token1Symbol"],
-            "lastUpdateBN": ["lastUpdateBN", "lastUpdateDT", "totalSupply", "token0Supply", "token1Supply", "lastState"],
-            "replaceIfNull": ["createDT", "creator", "createdAtTx"] // add currencyID
-        }, sqlDebug);
-
-
-        await this.upsertSQL({
-            "table": "asset",
-            "keys": ["asset", "chainID"],
-            "vals": ["assetType", "totalSupply", "lastUpdateDT", "lastUpdateBN"], // add currencyID
-            "data": tokens,
-            "replaceIfNull": ["assetType"], // add currencyID
-            "lastUpdateBN": ["lastUpdateBN", "lastUpdateDT", "totalSupply"]
-        }, sqlDebug);
-
-        await this.upsertSQL({
-            "table": "asset",
-            "keys": ["asset", "chainID"],
-            "vals": ["assetType", "assetName", "symbol", "totalSupply", "lastUpdateDT", "lastUpdateBN", "metadata", "erc721isMetadata", "erc721isEnumerable", "tokenBaseURI", "ipfsUrl", "imageUrl", "createDT", "creator", "createdAtTx"],
-            "data": erc721classes,
-            "replace": ["assetType", "assetName", "symbol", "erc721isMetadata", "erc721isMetadata"],
-            "lastUpdateBN": ["totalSupply", "lastUpdateBN", "lastUpdateDT", "metadata", "tokenBaseURI", "ipfsUrl", "imageUrl"],
-            "replaceIfNull": ["createDT", "creator", "createdAtTx"]
-        }, sqlDebug);
-        await this.upsertSQL({
-            "table": "asset",
-            "keys": ["asset", "chainID"],
-            "vals": ["assetType", "lastUpdateDT", "lastUpdateBN", "createDT", "creator", "createdAtTx"],
-            "data": contracts,
-            "lastUpdateBN": ["lastUpdateBN", "lastUpdateDT"],
-            "replace": ["assetType"],
-            "replaceIfNull": ["createDT", "creator", "createdAtTx"]
-        }, sqlDebug);
-        // TODO: need new case for loans here to set asset for acala/parallel ... but how are they getting into "asset" now?
-
-        // ---- assetlog
-        await this.upsertSQL({
-            "table": "assetlog",
-            "keys": ["asset", "chainID", "indexTS", "source"],
-            "vals": ["issuance"],
-            "data": assetlogTokensIssuance,
-            "replace": ["issuance"]
-        })
-
-        await this.upsertSQL({
-            "table": "assetlog",
-            "keys": ["asset", "chainID", "indexTS", "source"],
-            "vals": ["priceUSD"],
-            "data": assetlogTokensPrice,
-            "replace": ["priceUSD"]
-        })
-
-        await this.upsertSQL({
-            "table": "assetlog",
-            "keys": ["asset", "chainID", "indexTS", "source"],
-            "vals": ["open", "close", "low", "high", "lp0", "lp1", "issuance", "token0Volume", "token1Volume", "state"],
-            "data": assetlogLiquidityPairs,
-            "replace": ["open", "close", "low", "high", "lp0", "lp1", "issuance", "token0Volume", "token1Volume", "state"]
-        }, sqlDebug)
-
-        await this.upsertSQL({
-            "table": "assetlog",
-            "keys": ["asset", "chainID", "indexTS", "source"],
-            "vals": ["issuance", "debitExchangeRate"],
-            "data": assetlogLoans,
-            "replace": ["issuance", "debitExchangeRate"]
-        }, sqlDebug)
-
-        await this.upsertSQL({
-            "table": "assetlog",
-            "keys": ["asset", "chainID", "indexTS", "source"],
-            "vals": ["supplyExchangeRate", "borrowExchangeRate"],
-            "data": assetlogCDPs,
-            "replace": ["supplyExchangeRate", "borrowExchangeRate"]
-        })
-
-        // --- tokenholder
-        await this.upsertSQL({
-            "table": "tokenholder",
-            "keys": ["asset", "chainID", "tokenID"],
-            "vals": ["holder", "lastUpdateDT", "lastUpdateBN", "meta", "tokenURI", "free"],
-            "data": erc721tokens,
-            "lastUpdateBN": ["holder", "free", "meta", "tokenURI", "lastUpdateBN", "lastUpdateDT"]
-        }, sqlDebug)
-
-        // reset assetChainMap after we have finised processing
-        this.resetAssetChainMap()
-    }
 
     parseAssetChainHolder(assetChainHolder) {
         let words = assetChainHolder.split('-');
@@ -2752,75 +1623,13 @@ module.exports = class Indexer extends AssetManager {
         return [asset, chainID, holder];
     }
 
-
     computeTargetBatchSize(batchSize, total) {
         if (total <= batchSize) return batchSize;
         let numBatches = (Math.ceil(total / batchSize));
         return Math.ceil(total / numBatches);
     }
 
-    async flushHashesRows() {
-        if (this.evmTxRowsToInsert && this.evmTxRowsToInsert.length > 0) {
-            if (this.writeData) {
-                let i = 0;
-                let batchSize = this.computeTargetBatchSize(1024, this.evmTxRowsToInsert.length);
-                while (i < this.evmTxRowsToInsert.length) {
-                    let currBatch = this.evmTxRowsToInsert.slice(i, i + batchSize);
-                    if (currBatch.length > 0) {
-                        await this.insertBTRows(this.btEVMTx, currBatch, "evmtx");
-                        //if (currBatch.length > 50) console.log(`flush: flushEVMTxRows btEVMTx=${currBatch.length}`);
-                        i += batchSize;
-                    }
-                }
-            } else {
-                console.log("SKIP wrote evmtx");
-            }
-            this.evmTxRowsToInsert = [];
-        }
 
-        if (this.hashesRowsToInsert && this.hashesRowsToInsert.length > 0) {
-            if (this.writeData) {
-                let i = 0;
-                let batchSize = this.computeTargetBatchSize(1024, this.hashesRowsToInsert.length);
-                while (i < this.hashesRowsToInsert.length) {
-                    let currBatch = this.hashesRowsToInsert.slice(i, i + batchSize);
-                    //console.log(`currBatch#${n}`, currBatch)
-                    if (currBatch.length > 0) {
-                        await this.insertBTRows(this.btHashes, currBatch, "hashes");
-                        //if (currBatch.length > 50) console.log(`flush: flushHashesRows btHashes=${currBatch.length}`);
-                        i += batchSize;
-                    }
-                }
-            } else {
-                console.log("SKIP wrote hashes");
-            }
-            this.hashesRowsToInsert = [];
-            this.relatedMap = {}
-            this.extrinsicEvmMap = {}
-        }
-
-    }
-
-    async flushBlockRows() {
-        const tableChain = this.getTableChain(this.chainID);
-        if (this.blockRowsToInsert && this.blockRowsToInsert.length > 0) {
-            if (this.writeData) {
-                var i = 0,
-                    batchSize = 256;
-                while (i < this.blockRowsToInsert.length) {
-                    let currBatch = this.blockRowsToInsert.slice(i, i + batchSize);
-                    //console.log(`currBatch#${n}`, currBatch)
-                    if (currBatch.length > 0) {
-                        await this.insertBTRows(tableChain, currBatch, `chain${this.chainID}`);
-                        i += batchSize;
-                    }
-                }
-            } else {
-                console.log("SKIP wrote block");
-            }
-            this.blockRowsToInsert = [];
-        }
-    }
 
     get_asset(asset) {
         let a = this.tallyAsset[asset];
@@ -3541,27 +2350,6 @@ module.exports = class Indexer extends AssetManager {
 
     }
 
-    async dump_failed_traces() {
-        let traceRows = this.failedParseTraces
-        let i = 0;
-        for (i = 0; i < traceRows.length; i += 10000) {
-            let j = i + 10000;
-            if (j > traceRows.length) j = traceRows.length;
-            await this.upsertSQL({
-                "table": `testParseTraces`,
-                "keys": ["chainID", "bn", "s", "k"],
-                "vals": ["blockHash", "p", "v", "traceType", "subscribeStorageParseV", "testGroup"],
-                "data": traceRows.slice(i, j),
-                "replace": ["blockHash", "p", "v", "traceType", "subscribeStorageParseV", "testGroup"]
-            });
-        }
-        if (traceRows.length > 0) {
-            console.log(`[chain${this.chainID}] added ${traceRows.length} recs to testParseTraces`)
-            console.log(`(failed) debugParseTraces summary`, this.debugParseTraces)
-            this.failedParseTraces = []
-            this.debugParseTraces = {}
-        }
-    }
 
     parseEvent(evt, eventID, api = false) {
         if (!api) return (false);
@@ -3790,7 +2578,7 @@ module.exports = class Indexer extends AssetManager {
             }
         }
 
-	console.log(`[${extrinsicID}] ${extrinsicHash}   |  ${section}:${method}`)
+        console.log(`[chain ${this.chainID} extrinsicID${extrinsicID}] ${extrinsicHash} | ${section}:${method}`)
 
 
         try {
@@ -4249,145 +3037,6 @@ module.exports = class Indexer extends AssetManager {
         return feedcrowdloan
     }
 
-    process_reverse_evmlink(evmAddr) {
-        // 0xb554B9856DFdbf52B98E0e4D2b981C34E20e1dAB -> 0xe37c9c4ba2e1409aecb4dcb992b3a1fac2b2585e2c759e25ab875b0fca8a10af (possible to derive h160SS58Pubkey using h160)
-        // 0xe37c9c4ba2e1409aecb4dcb992b3a1fac2b2585e2c759e25ab875b0fca8a10af -> 0xb554B9856DFdbf52B98E0e4D2b981C34E20e1dAB (impossible to covert h160SS58Pubkey into h160)
-        // if we observe 0xb554B9856DFdbf52B98E0e4D2b981C34E20e1dAB
-        // want to establish related links for ss58Pubkey (af) -> owned H160 (AB)
-        if (this.relatedMap[evmAddr] == undefined) {
-            this.relatedMap[evmAddr] = true // write link only once
-            let h160SS58Pubkey = paraTool.h160ToPubkey(evmAddr)
-            let related = {}
-            let metadata = {
-                chainID: this.chainID,
-                H160SS58Pubkey: h160SS58Pubkey,
-                H160: evmAddr
-            }
-            related[evmAddr] = {
-                value: JSON.stringify({
-                    url: "/account/" + h160SS58Pubkey,
-                    title: `${evmAddr}`,
-                    description: `Reversed H160 Address`,
-                    linktype: "address",
-                    metadata: metadata
-                }),
-                timestamp: 1 * 1000000 // DO NOT update this
-            }
-            let reversedH160REec = {
-                key: h160SS58Pubkey,
-                data: {
-                    related: related
-                }
-            }
-            //console.log(`reserved link`, JSON.stringify(reversedH160REec))
-            //this.hashesRowsToInsert.push(reversedH160REec)
-
-        }
-    }
-
-    process_pending_extrinsic(api, extrinsicRaw, lastestBlockNumber) {
-        //eventsRaw, block, index, not available
-        let currTS = Math.floor(Date.now() / 1000)
-
-        // must do extrinsicHash, isSigned here. information is lost after decode_s_extrinsic
-        let extrinsicHash = extrinsicRaw.hash.toHex();
-        if (this.pendingExtrinsic[extrinsicHash] !== undefined) return (false);
-        this.pendingExtrinsic[extrinsicHash] = 1;
-
-        let extrinsicID = `${extrinsicHash}-pending`
-        let extrinsic = this.decode_s_extrinsic(extrinsicRaw, lastestBlockNumber, 'pending', api); //lastestBlockNumber is used to compute lifetime
-
-        if (!extrinsic.method) {
-            // TODO: onInitialize, onFinalize
-            return (extrinsic);
-        }
-        let isSigned = this.isExtrinsicSigned(extrinsic)
-        //console.log('hash!!', extrinsicHash, `isSigned=${isSigned}`, `${JSON.stringify(extrinsic.signature)}`, extrinsic.signature.signer)
-
-        let success = false;
-        let chainDecimal = this.getChainDecimal(this.chainID)
-        if (isSigned) {
-            extrinsic.signature.tip = extrinsic.signature.tip / 10 ** chainDecimal
-        }
-        if (!(extrinsic.signature)) {
-            return (extrinsic);
-        }
-
-        //(ed25519 and sr25519 do not have id?)
-        let signer = false
-        if (extrinsic.signature.signer.id != undefined) {
-            signer = extrinsic.signature.signer.id
-        } else if (extrinsic.signature.signer != undefined) {
-            signer = extrinsic.signature.signer
-        }
-
-        // fromAddress is pubkey representation common to ALL substrate chains
-        //let fromAddress = isSigned ? paraTool.getPubKey(signer) : "NONE";
-        let fromAddress = "NONE"
-        try {
-            fromAddress = isSigned ? paraTool.getPubKey(signer) : "NONE";
-        } catch (e) {
-            console.log("getPubKey error", e)
-        }
-
-        let params = extrinsic.args;
-
-        let nonce = isSigned ? extrinsic.signature.nonce : 0 //non-signed extrinsic has by default 0 nonce
-
-        let tip = isSigned ? extrinsic.signature.tip : 0 //non-signed extrinsic has by default 0 tip
-
-        let txLifetime = (extrinsic.lifetime != undefined) ? extrinsic.lifetime : false
-
-
-        extrinsic.extrinsicHash = isSigned ? extrinsicHash : extrinsicHash; //todo: should unsigned extrinsic have extrinsicHash?
-        extrinsic.extrinsicID = extrinsicID
-        extrinsic.fromAddress = fromAddress; // this is the pubkey
-
-        let sigs = extrinsic.signature
-        //sigs.fee = extrinsic.fee (fee can't be computed)
-
-        let rExtrinsic = {
-            chainID: this.chainID,
-            ts: currTS,
-            extrinsicHash: extrinsicHash,
-            extrinsicID: extrinsicID,
-            //fromAddress: isSigned ? fromAddress : null,
-            signer: isSigned ? signer : null,
-            signature: isSigned ? extrinsic.signature.signature : null,
-            lifetime: txLifetime,
-            nonce: nonce,
-            tip: tip,
-            section: extrinsic.method.pallet,
-            method: extrinsic.method.method, //replacing the original method object format
-            params: extrinsic.args,
-        }
-
-        try {
-            // feed is used for {feed, feedTransfer, feedRewards}
-            var feed = {};
-            feed = rExtrinsic
-            feed["txstatus"] = 'pending'
-            feed["genTS"] = this.currentTS();
-            feed["source"] = this.hostname
-
-            // (1) hashesRowsToInsert: extrinsicHash -> tx
-            let hashrec = {};
-            hashrec["tx"] = {
-                value: JSON.stringify(feed),
-                timestamp: 0 //this is nondeterministic
-            };
-            this.stat.hashesRows.substrateTx++
-            let extrinsicHashRec = {
-                key: extrinsicHash,
-                data: {}, //feed/feedunfinalized
-            }
-            extrinsicHashRec.data["feedpending"] = hashrec
-            this.hashesRowsToInsert.push(extrinsicHashRec)
-        } catch (err) {
-            this.log_indexing_error(err, "process_pending_extrinsic")
-        }
-        return (rExtrinsic);
-    }
 
     //support both formats
     parseEventSectionMethod(e) {
@@ -4526,32 +3175,11 @@ module.exports = class Indexer extends AssetManager {
                 source: this.hostname,
                 genTS: this.currentTS()
             };
-            rec[encodedAssetChain] = {
-                value: JSON.stringify(newState),
-                timestamp: r.blockTS * 1000000
-            }
-
-            /*          this.logger.info({
-                            "op": "dump_addressBalanceRequest upd",
-                            "chainID": this.chainID,
-                            "address": address,
-                            "asset": asset,
-                            "assetChain": assetChain,
-                            "encodedAssetChain": encodedAssetChain,
-                            "newState": newState,
-                            "upd": str
-                        }) */
             let rowKey = address.toLowerCase()
-            rows.push({
-                key: rowKey,
-                data: {
-                    realtime: rec
-                }
-            });
+            await this.insertAccountRealtime(rowKey, encodedAssetChain, r.blockTS, JSON.stringify(newState));
         }
 
-        let [tblName, tblRealtime] = this.get_btTableRealtime()
-        await this.insertBTRows(tblRealtime, rows, tblName);
+
         rows = [];
         await this.upsertSQL({
             "table": `address${this.chainID}`,
@@ -4571,10 +3199,6 @@ module.exports = class Indexer extends AssetManager {
         let extrinsicID = blockNumber + "-" + index;
         // must do extrinsicHash, isSigned here. information is lost after decode_s_extrinsic
         let extrinsicHash = extrinsicRaw.hash.toHex();
-        if (this.pendingExtrinsic[extrinsicHash] !== undefined && finalized) {
-            // console.log("deleting finalized extrinsic from pending list", extrinsicHash);
-            delete this.pendingExtrinsic[extrinsicHash];
-        }
 
         let extrinsic = this.decode_s_extrinsic(extrinsicRaw, blockNumber, index, api);
         if (!extrinsic.method) {
@@ -4683,30 +3307,17 @@ module.exports = class Indexer extends AssetManager {
             rExtrinsic.err = txErr
         }
 
-        if (!paraTool.auditHashesTx(rExtrinsic)) {
-            console.log(`Failed Audit!!`, rExtrinsic)
-        }
-
         if (!isSigned) {
             this.chainParser.processIncomingXCM(this, rExtrinsic, extrinsicID, eventsRaw, isTip, finalized);
         }
-        //console.log('hash!!', extrinsicHash, `isSigned=${isSigned}`, `${JSON.stringify(extrinsic.signature)}`, extrinsic.signature.signer)
-
-        //extrinsic.fromAddress = fromAddress; // this is the pubkey
         try {
-
             // feed is used for {feed, feedTransfer, feedRewards}
             var feed = {};
             feed = rExtrinsic
-            //!!! MK: write encodedCalls here!!
             feed.encodedCalls = extrinsic.encodedCalls
             feed["genTS"] = this.currentTS();
-            feed["source"] = this.hostname // add index source for debugging
-
             this.chainParser.processExtrinsicEvents(this, rExtrinsic.section, rExtrinsic.method, rExtrinsic.events);
-
             let isSuccess = (rExtrinsic.err == undefined) ? true : false //skip feedtransfer/feedxcm/feedreward/feedcrowdloan processing if is failure case
-
             if (isSuccess) {
                 /* process feedtransfer:
                 feedtransfer keeps a list of incoming transfers
@@ -4726,16 +3337,15 @@ module.exports = class Indexer extends AssetManager {
 
                     // incoming transfers (recipient)
                     let receiptAddress = paraTool.getPubKey(feedTransfer.to)
-                    this.stat.addressRows.feedtransfer++
-                    this.updateAddressExtrinsicStorage(receiptAddress, extrinsicID, extrinsicHash, "feedtransfer", feedTransfer, blockTS, block.finalized);
+
+                    await this.updateAddressExtrinsicStorage(receiptAddress, extrinsicID, extrinsicHash, "feedtransfer", feedTransfer, blockTS, block.finalized);
 
                     // outgoing transfers (sender)
                     let senderAddress = paraTool.getPubKey(feedTransfer.from)
                     let outgoingFeedTransfer = feedTransfer
                     outgoingFeedTransfer.isIncoming = 0
 
-                    this.stat.addressRows.feedtransfer++
-                    this.updateAddressExtrinsicStorage(senderAddress, extrinsicID, extrinsicHash, "feedtransfer", outgoingFeedTransfer, blockTS, block.finalized);
+                    await this.updateAddressExtrinsicStorage(senderAddress, extrinsicID, extrinsicHash, "feedtransfer", outgoingFeedTransfer, blockTS, block.finalized);
                 }
 
                 if (valueExtrinsicUSD > 0) {
@@ -4810,14 +3420,13 @@ module.exports = class Indexer extends AssetManager {
                                 if (msgHashCandidate) xcmtransfer.msgHash = msgHashCandidate
                             }
 
-                            this.stat.addressRows.xcmsend++;
-                            this.updateAddressExtrinsicStorage(fromAddress, extrinsicID, extrinsicHash, "feedxcm", xcmtransfer, blockTS, block.finalized); //not sure about bt write here..
+                            await this.updateAddressExtrinsicStorage(fromAddress, extrinsicID, extrinsicHash, "feedxcm", xcmtransfer, blockTS, block.finalized); //not sure about bt write here..
 
                             // build pendingXCMInfo here
                             let pendingXcmInfo = await this.buildPendingXcmInfo(xcmtransfer, rExtrinsic)
                             if (this.debugLevel >= paraTool.debugInfo) console.log(`pendingXcmInfo [${xcmtransfer.extrinsicID}] [${xcmtransfer.extrinsicHash}]`, pendingXcmInfo)
                             xcmtransfer.xcmInfo = pendingXcmInfo
-                            this.updateXCMTransferStorage(xcmtransfer, isTip, finalized); // store, flushed in flushXCM
+                            await this.updateXCMTransferStorage(xcmtransfer, isTip, finalized); // store, flushed in flushXCM
                         }
                     } else {
                         if (this.debugLevel >= paraTool.debugInfo) console.log(`unsafeXcmTip [${rExtrinsic.extrinsicID}] [${rExtrinsic.section}:${rExtrinsic.method}] xcmCnt=${rExtrinsic.xcms.length} - skip`)
@@ -4834,7 +3443,7 @@ module.exports = class Indexer extends AssetManager {
                                 if (msgHashCandidate) unsafeXcmtransfer.msgHash = msgHashCandidate
                             }
                             //for unsafeXcmtransfer. we will send xcmtransfer that may eventually got dropped
-                            this.sendWSMessage(xcmtransfer, "xcmtransfer", finalized);
+
                         }
                     }
                     delete rExtrinsic.xcms
@@ -4886,8 +3495,8 @@ module.exports = class Indexer extends AssetManager {
                             // claim: it's possible but super rare
                             let toAddress = paraTool.getPubKey(feedreward.account)
                             // (3) acct:feedreward -> recFeedreward (can be processed immediately)
-                            this.stat.addressRows.feedreward++
-                            this.updateAddressExtrinsicStorage(toAddress, extrinsicID, extrinsicHash, "feedreward", feedreward, blockTS, block.finalized);
+
+                            await this.updateAddressExtrinsicStorage(toAddress, extrinsicID, extrinsicHash, "feedreward", feedreward, blockTS, block.finalized);
                         }
                         if (feedRewards.length > 0) {
                             feed["rewards"] = this.map_feedRewards_to_rewards(feedRewards);
@@ -4907,9 +3516,9 @@ module.exports = class Indexer extends AssetManager {
                             let toAddress = paraTool.getPubKey(feedcrowdloan.account)
                             //TODO:should the key include event index?
                             // (3) acct:feedcrowdloan -> recFeedcrowdloan (can be processed immediately)
-                            this.stat.addressRows.feedcrowdloan++
+
                             //console.log(`${toAddress} feedcrowdloan`, feedcrowdloan)
-                            this.updateAddressExtrinsicStorage(toAddress, extrinsicID, extrinsicHash, "feedcrowdloan", feedcrowdloan, blockTS, block.finalized);
+                            await this.updateAddressExtrinsicStorage(toAddress, extrinsicID, extrinsicHash, "feedcrowdloan", feedcrowdloan, blockTS, block.finalized);
                             this.updateCrowdloanStorage(feedcrowdloan);
                         }
                     }
@@ -4945,26 +3554,10 @@ module.exports = class Indexer extends AssetManager {
 
             if (this.validAddress(fromAddress)) {
                 // (4) txn (can be processed immediately)
-                this.stat.addressRows.feed++
-                this.updateAddressExtrinsicStorage(fromAddress, extrinsicID, extrinsicHash, "feed", feed, blockTS, block.finalized);
+                await this.updateAddressExtrinsicStorage(fromAddress, extrinsicID, extrinsicHash, "feed", feed, blockTS, block.finalized);
             }
-            // (1) hashesRowsToInsert: extrinsicHash -> tx
-            let hashrec = {};
-            hashrec["tx"] = { // TODO: consider storing blockNumber-index instead of "tx" to support edge case of account reaping
-                value: JSON.stringify(feed),
-                timestamp: blockTS * 1000000
-            };
-            this.stat.hashesRows.substrateTx++
-            let extrinsicHashRec = {
-                key: extrinsicHash,
-                data: {}, //feed/feedunfinalized
-            }
-            if (block.finalized) {
-                extrinsicHashRec.data["feed"] = hashrec
-            } else {
-                extrinsicHashRec.data["feedunfinalized"] = hashrec
-            }
-            this.hashesRowsToInsert.push(extrinsicHashRec)
+
+            this.insertHash(extrinsicHash, JSON.stringify(feed), blockTS, finalized, "extrinsic");
         } catch (err) {
             this.log_indexing_error(err, "processBlock")
         }
@@ -5198,12 +3791,8 @@ module.exports = class Indexer extends AssetManager {
             blockStats.numTraceRecords = autoTraces.length
         }
         if (evmBlock) {
-            blockStats.blockHashEVM = evmBlock.hash;
-            blockStats.parentHashEVM = evmBlock.parentHash;
             blockStats.numTransactionsEVM = evmBlock.transactions.length;
             blockStats.numTransactionsInternalEVM = evmBlock.transactionsInternal ? evmBlock.transactionsInternal.length : 0;
-            blockStats.gasUsed = evmBlock.gasUsed;
-            blockStats.gasLimit = evmBlock.gasLimit;
         }
         if (evmReceipts) {
             blockStats.numReceiptsEVM = ethTool.computeNumEvmlogs(evmReceipts);
@@ -5367,200 +3956,18 @@ module.exports = class Indexer extends AssetManager {
 
     updateAssetHolder(asset, holder, bn, newState = false) {
         let assetholder = `${holder}-${asset}`
-        this.stat.assetholder.read++
         let cachedState = this.assetholder[assetholder]
 
         if (cachedState == undefined) {
-            this.stat.assetholder.unique++
-            this.stat.assetholder.write++
             this.assetholder[assetholder] = [bn, newState];
         } else {
             var [prevBN, prevState] = cachedState
             if (prevBN < bn) { // we record newState = false cases even if they are newer
-                this.stat.assetholder.write++
-                this.stat.assetholder.update++
                 this.assetholder[assetholder] = [bn, newState];
             }
         }
     }
 
-    // for all holders get the balances (native or not) and write to BT and mysql ... within 10 mins
-    async updateChainAssetHoldersBalances(chain, limitSeconds = 600) {
-        let batchSize = 128;
-        let bn = chain.blocksFinalized;
-        await this.setupAPI(chain);
-        let chainID = chain.chainID;
-        this.chainID = chainID;
-        let web3Api = this.web3Api
-        let startTS = this.getCurrentTS();
-
-        let nativeAsset = this.getNativeAsset();
-        var sql = `select asset.asset, assetholder.holder, asset.decimals, asset.xcContractAddress, asset.assetType, assetholder.lastUpdateBN, UNIX_TIMESTAMP(assetholder.lastUpdateDT) as lastUpdateTS
-from assetholder${chainID} as assetholder, asset where assetholder.asset = asset.asset and asset.chainID = ${chainID} and assetholder.lastCrawlBN < assetholder.lastUpdateBN and length(holder) = 42 limit 100000`;
-        // and asset.assetType in ( 'ERC20', 'ERC20LP', 'Token' )
-        console.log(sql);
-        let ts = this.getCurrentTS();
-        var assetholderRecs = await this.poolREADONLY.query(sql);
-        let assetdecimals = {};
-        let assetholders = {};
-        for (let i = 0; i < assetholderRecs.length; i++) {
-            let a = assetholderRecs[i];
-            let asset = a.asset;
-            let assetChain = paraTool.makeAssetChain(asset, chainID);
-            let holder = a.holder;
-            let decimals = a.decimals;
-            let lastUpdateTS = a.lastUpdateTS;
-            let lastUpdateBN = a.lastUpdateBN;
-            if (!assetdecimals[assetChain]) {
-                assetdecimals[assetChain] = decimals;
-            }
-            if (!assetholders[assetChain]) {
-                assetholders[assetChain] = {};
-            }
-            assetholders[assetChain][holder] = a;
-        }
-        let rows = [];
-        let out = [];
-        let assetsList = []; //for debugging
-        for (const assetChain of Object.keys(assetholders)) {
-            if (this.getCurrentTS() - startTS > limitSeconds) return (true);
-            let a = assetholders[assetChain];
-            let holdersAll = Object.keys(assetholders[assetChain]);
-            let i = 0;
-            let decimals = this.getChainDecimal(chainID);
-            while (i < holdersAll.length) {
-                let holders = holdersAll.slice(i, i + batchSize);
-                let holderBalances = {};
-                let [asset, _] = paraTool.parseAssetChain(assetChain);
-                let tokenDecimal = assetdecimals[asset];
-                try {
-                    console.log("FETCH", asset, holders.length, nativeAsset, this.chainID)
-                    if (asset == nativeAsset && (chainID !== paraTool.chainIDMoonbeam) && (chainID !== paraTool.chainIDMoonriver)) { // TODO: check Astar/Shiden
-                        holderBalances.blockNumber = chain.blocksFinalized;
-                        holderBalances.holders = [];
-                        for (let h = 0; h < holders.length; h++) {
-                            let account_id = holders[h];
-                            try {
-                                var x = await this.api.query.system.account(account_id);
-                                let d = x.toJSON().data;
-                                d.free = d.free / 10 ** decimals;
-                                d.reserved = d.reserved / 10 ** decimals;
-                                d.miscFrozen = d.miscFrozen / 10 ** decimals;
-                                d.feeFrozen = d.feeFrozen / 10 ** decimals;
-                                holderBalances.holders.push({
-                                    holderAddress: account_id,
-                                    data: d
-                                });
-                            } catch (e) {
-                                console.log(e);
-                            }
-                        }
-                        // holderBalances = await ethTool.getNativeChainBalances(web3Api, holders, bn)
-                    } else {
-                        let tokenAddress = asset;
-                        let assetInfo = this.assetInfo[assetChain];
-                        if (assetInfo && assetInfo.xcContractAddress) {
-                            // if there is a mapping from asset => xcContractAddress,use that for the tokenAddress in this ethTool rpccall
-                            tokenAddress = assetInfo.xcContractAddress;
-                        }
-                        holderBalances = await ethTool.getTokenHoldersRawBalances(web3Api, tokenAddress, holders, tokenDecimal, bn)
-                        if (holderBalances.holders.length != holders.length) {
-                            console.log("FETCH FAIL", tokenAddress, holders.length, holderBalances.holders.length);
-                        }
-                    }
-                } catch (err) {
-                    this.logger.warn({
-                        "op": "crawlAssetHoldersBalances",
-                        "asset": asset,
-                        err
-                    })
-                }
-                if (holderBalances && holderBalances.holders) {
-                    let lastCrawlBN = holderBalances.blockNumber;
-                    let nwrites = 0;
-                    holderBalances.holders.map((b) => {
-                        let holder = b.holderAddress;
-                        let accKey = b.holderAddress.toLowerCase();
-                        let newState = false;
-                        let free = 0;
-                        let reserved = 0;
-                        let feeFrozen = 0;
-                        let miscFrozen = 0;
-                        if (b.data) {
-                            newState = b.data;
-                            free = newState.free;
-                            reserved = newState.reserved;
-                            feeFrozen = newState.feeFrozen;
-                            miscFrozen = newState.miscFrozen;
-
-                        } else if (b.balance != undefined) {
-                            free = b.balance;
-                            if (b.error != undefined) {
-                                console.log(`crawlAssetHoldersBalances acctError ${holder}, asset=${asset}, errMsg= ${b.error}`)
-                            }
-                            newState = {
-                                free: b.balance
-                            }
-                        }
-
-                        if (free < 10 ** 32) {
-                            let rec = {};
-                            let lastUpdateTS = assetholders[holder];
-                            rec[assetChain] = {
-                                value: JSON.stringify(newState),
-                                // timestamp could be added from lastUpdateTS
-                                timestamp: ts * 1000000
-                            }
-                            rows.push({
-                                key: accKey,
-                                data: {
-                                    realtime: rec
-                                }
-                            });
-                            out.push(`('${asset}', '${chainID}', '${accKey}', '${free}', '${reserved}', '${feeFrozen}', '${miscFrozen}', '${lastCrawlBN}')`);
-                            nwrites++;
-                        }
-                    });
-                    console.log(" --> ", asset, nwrites);
-                }
-                console.log(out);
-
-                i += batchSize
-                if (out.length > 0) {
-                    await this.upsertSQL({
-                        "table": `assetholder${chainID}`,
-                        "keys": ["asset", "chainID", "holder"],
-                        "vals": ["free", "reserved", "frozen", "miscFrozen", "lastCrawlBN"],
-                        "data": out,
-                        "replace": ["free", "reserved", "frozen", "miscFrozen", "lastCrawlBN"]
-                    });
-                    out = [];
-                }
-                // write addressrealtime
-                if (rows.length > batchSize) { // temp
-                    await this.insertBTRows(this.btAccountRealtime, rows, "accountrealtime");
-                    rows = [];
-                }
-            }
-        }
-
-        if (rows.length > 0) {
-            await this.insertBTRows(this.btAccountRealtime, rows, "accountrealtime");
-            rows = [];
-        }
-
-        if (out.length > 0) {
-            await this.upsertSQL({
-                "table": `assetholder${chainID}`,
-                "keys": ["asset", "chainID", "holder"],
-                "vals": ["free", "reserved", "frozen", "miscFrozen", "lastCrawlBN"],
-                "data": out,
-                "replace": ["free", "reserved", "frozen", "miscFrozen", "lastCrawlBN"]
-            });
-            out = [];
-        }
-        return (true);
-    }
 
     async process_erc20_token_transfer(tx, t, chainID, eventID = "0", finalized = false) {
         let web3Api = this.web3Api
@@ -5641,13 +4048,12 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             };
             let extrinsicID = `${tx.blockNumber}-${tx.transactionIndex}`
             if (finalized) {
-                this.updateAddressExtrinsicStorage(t.from, extrinsicID, tx.transactionHash, "feedevmtransfer", v, tx.timestamp, true);
-                this.updateAddressExtrinsicStorage(t.to, extrinsicID, tx.transactionHash, "feedevmtransfer", v, tx.timestamp, true);
-                this.updateAddressExtrinsicStorage(t.tokenAddress, extrinsicID, tx.transactionHash, "feedevmtransfer", v, tx.timestamp, true);
+                await this.updateAddressExtrinsicStorage(t.from, extrinsicID, tx.transactionHash, "feedevmtransfer", v, tx.timestamp, true);
+                await this.updateAddressExtrinsicStorage(t.to, extrinsicID, tx.transactionHash, "feedevmtransfer", v, tx.timestamp, true);
+                await this.updateAddressExtrinsicStorage(t.tokenAddress, extrinsicID, tx.transactionHash, "feedevmtransfer", v, tx.timestamp, true);
             }
         }
     }
-
 
     async fetchMissingERC20(contractAddress, bn) {
         let web3Api = this.web3Api
@@ -5753,7 +4159,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         }
         return (false);
     }
-
 
     //called after erc20 transfers is processed
     async process_evmtx_swap(tx, chainID, finalized = false) {
@@ -5871,40 +4276,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         return false
     }
 
-    // For all txs in txpool content, write the raw data to hashes feedpending -- it doesn't have a blockNumber/blockHash yet but does have "decodedInput" -- the time is the present time
-    // Because multiple indexers write "feedpending" cells with slightly different TS, query MUST dedup these cells by transactionHash (which embeds nonce) should use the oldest cells timestamp
-    // We do NOT write into addressextrinsic "feedunfinalized" here, and defer writing there until we have a extrinsicID/blockNumber CANDIDATE.
-    async processPendingEVMTransactions(txs, chainID) {
-        let ts = this.getCurrentTS();
-        let rects = ts * 1000000;
-        for (const tx of txs) {
-            let evmTxHash = tx.hash;
-            let fromAddress = tx.from.toLowerCase()
-            let evmTxHashRec = {
-                key: evmTxHash,
-                data: {}, //feedpending
-            }
-            let receipt = {
-                transactionHash: evmTxHash,
-                gasUsed: "0x",
-                status: [],
-                transfers: [],
-                swaps: [],
-                decodedLogs: [],
-            }
-            let fTxn = ethTool.decorateTxn(tx, receipt, [], ts, chainID)
-            evmTxHashRec.data = {
-                feedpending: {
-                    tx: {
-                        value: JSON.stringify(fTxn),
-                        timestamp: rects
-                    }
-                }
-            }
-            //console.log("processPendingEVMTransaction", evmTxHashRec, fTxn);
-            this.hashesRowsToInsert.push(evmTxHashRec)
-        }
-    }
 
     // For all evm txs in evmFullBlock, we wish to be able to at least:
     //  - /account/0x7aB.. --> get all the ERC20/721/... assets across chains at the tip
@@ -5952,24 +4323,12 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         if (tx.from != undefined) {
             let fromAddress = tx.from.toLowerCase()
             // writes into feed or feedunfinalized based on finalized
-            this.updateAddressExtrinsicStorage(fromAddress, syntheticExtrinsicID, evmTxHash, "feed", tx, tx.timestamp, finalized);
+            await this.updateAddressExtrinsicStorage(fromAddress, syntheticExtrinsicID, evmTxHash, "feed", tx, tx.timestamp, finalized);
         }
         // (2) hashesRowsToInsert: evmTxHash -> evmTX
-        this.stat.hashesRows.evmTx++
 
-        let rects = tx.timestamp * 1000000;
-        let evmTxHashRec = {
-            key: evmTxHash,
-            data: {}, //feed/feedunfinalized
-        }
-        let family = finalized ? 'feed' : 'feedunfinalized';
-        evmTxHashRec.data[family] = {
-            tx: {
-                value: JSON.stringify(tx),
-                timestamp: rects
-            }
-        }
-        this.hashesRowsToInsert.push(evmTxHashRec)
+        await this.insertHash(evmTxHash, rects, JSON.stringify(tx), finalized, ctx);
+
 
         // write evmtx to "feedto" to index txs interacting with (contract) address
         if (finalized) {
@@ -5988,7 +4347,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                     fee: tx.fee
                 }
                 //console.log(`[${tx.blockNumber}][${evmTxHash}] sent to ${tx.to}`, feedto)
-                this.updateAddressExtrinsicStorage(tx.to, syntheticExtrinsicID, evmTxHash, "feedto", feedto, tx.timestamp, true);
+                await this.updateAddressExtrinsicStorage(tx.to, syntheticExtrinsicID, evmTxHash, "feedto", feedto, tx.timestamp, true);
             }
             if (tx.creates) {
                 // this is contracts creates
@@ -6005,7 +4364,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                     fee: tx.fee
                 }
                 console.log(`[${tx.blockNumber}][${evmTxHash}] created at ${ethTool.toChecksumAddress(tx.creates)}`, feedCreates)
-                this.updateAddressExtrinsicStorage(tx.creates, syntheticExtrinsicID, evmTxHash, "feedto", feedCreates, tx.timestamp, true);
+                await this.updateAddressExtrinsicStorage(tx.creates, syntheticExtrinsicID, evmTxHash, "feedto", feedCreates, tx.timestamp, true);
                 if (contractType) {
                     let contractAddress = tx.creates.toLowerCase()
                     let contractMeta = {
@@ -6031,7 +4390,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             evmTxnCnt++
             await this.process_evm_transaction(tx, chainID, finalized, isTip);
         }
-        this.stat.hashesRows.evmTxPerBlk.push(evmTxnCnt)
     }
 
     // processEvents organizes events by index, and relays interesting events to
@@ -6062,21 +4420,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         return events;
     }
 
-
-    // processes RAW block and RAW events from BigTable chain into
-    // (0) account - feed: processing each extrinsics, with side effect of tallying asset
-    // (1) hashes: blockhash
-    // (2) block - feed: stored in "feed" column family
-    // (3) returning blockStats on block/events
-
-    async processPendingTransactions(pendingExtrinsics, lastestBlockNumber) {
-        if (pendingExtrinsics && pendingExtrinsics.length > 0) {
-            let api = this.apiAt; // this is always bleeding edge
-            let res = pendingExtrinsics.map((pendingExtrinsicRaw, index) => {
-                return (this.process_pending_extrinsic(api, pendingExtrinsicRaw, lastestBlockNumber));
-            })
-        }
-    }
 
     // detect new session using block event
     checkNewSession(eventsIndexed = []) {
@@ -6455,31 +4798,10 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             //console.log(`!!! indexRelayChainTrace [${relayChain}-${bn}] len=${xcmList.length} (finalized=${finalized}, isTip=${isTip})`, xcmList)
             await this.process_rcxcm(xcmList)
         }
-        let xcmMeta = []
-        for (const x of xcmList) {
-            // TODO: keep minimal essential data
-            // blockTS|msgType|relayChain|blockNumber|relayParentStateRoot|relayBlockHash|chainID|chainIDDest|sentAt|relayedAt|includedAt|msgHash
-            // (integer) blockTS|blockNumber|chainID|chainIDDest|sentAt|relayedAt|includedAt
-            let s = `${x.blockTS}|${x.msgType}|${this.relayChain}|${this.chainParser.parserBlockNumber}|${this.chainParser.relayParentStateRoot}|${this.chainParser.parserBlockHash}|${x.chainID}|${x.chainIDDest}|${x.sentAt}|${x.relayedAt}|${x.includedAt}|${x.msgHash}`
-            if (this.debugLevel >= paraTool.debugInfo) console.log(`xcmMeta: ${s}`)
-            xcmMeta.push(s)
-        }
-        //this.xcmMeta = xcmMeta
-        if (xcmMeta.length > 0) {
-            this.xcmMetaMap[bn] = {
-                blockNumber: this.chainParser.parserBlockNumber,
-                blockTS: this.chainParser.parserTS,
-                blockHash: this.chainParser.parserBlockHash,
-                stateRoot: this.chainParser.relayParentStateRoot,
-                xcmMeta: xcmMeta,
-            }
-        }
         return xcmList
     }
 
-
-
-    async processBlockEvents(chainID, block, eventsRaw, evmBlock = false, evmReceipts = false, evmTrace = false, autoTraces = false, finalized = false, write_bqlog = false, isTip = false, tracesPresent = false) {
+    async processBlockEvents(chainID, block, eventsRaw, evmBlock = false, evmReceipts = false, evmTrace = false, autoTraces = false, finalized = false, write_log = false, isTip = false, tracesPresent = false) {
         //processExtrinsic + processBlockAndReceipt + processEVMFullBlock
         if (!block) return;
         if (!block.extrinsics) return;
@@ -6540,7 +4862,7 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         // setParserContext
         this.chainParser.setParserContext(block.blockTS, blockNumber, blockHash, chainID);
         if (this.isRelayChain) this.chainParser.setRelayParentStateRoot(stateRoot)
-	this.apiAt = this.api
+        this.apiAt = this.api
         let api = this.apiAt; //processBlockEvents is sync func, so we must initialize apiAt before pass in?
         block.finalized = finalized;
 
@@ -6603,8 +4925,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         block.extrinsics = extrinsics;
 
         let processExtrinsicTS = (new Date().getTime() - processExtrinsicStartTS) / 1000
-        this.timeStat.processExtrinsicTS += processExtrinsicTS
-        this.timeStat.processExtrinsic += block.extrinsics.length
 
         let forceTry = true //MK: need to review this
         if ((isTip || forceTry) && this.isRelayChain) {
@@ -6615,16 +4935,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             } else {
                 console.log("this.indexRelayChainTrace FAIL", blockNumber, chainID, relayChain);
             }
-        }
-
-        let xcmMeta = []
-        if (this.isRelayChain) {
-            let xcmMetaInfo = this.xcmMetaMap[blockNumber]
-            if (xcmMetaInfo != undefined) {
-                xcmMeta = xcmMetaInfo.xcmMeta
-                if (this.debugLevel >= paraTool.debugInfo) console.log(`[${blockNumber}] [${blockHash}] xcmMeta found via xcmMetaMap!!`, xcmMeta)
-            }
-            block.xcmMeta = xcmMeta
         }
 
         let relayParentStateRoot = this.chainParser.relayParentStateRoot
@@ -6643,51 +4953,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
 
         // console.log("processBlockEvents added hashesRowsToInsert", blockHash, this.hashesRowsToInsert.length);
         // (3) hashesRowsToInsert: substrateBlockHash -> substrateBlockBN
-        this.stat.hashesRows.substrateTxPerBlk.push(block.extrinsics.length)
-        this.stat.hashesRows.substrateBlk++
-
-        let substrateBlockHashRec = {
-            key: blockHash,
-            data: {}, //feed/feedunfinalized
-        }
-        if (block.finalized) {
-            substrateBlockHashRec.data = {
-                feed: {
-                    block: {
-                        value: JSON.stringify(blockfeed),
-                        timestamp: blockTS * 1000000
-                    }
-                }
-            }
-        } else {
-            substrateBlockHashRec.data = {
-                feedunfinalized: {
-                    block: {
-                        value: JSON.stringify(blockfeed),
-                        timestamp: blockTS * 1000000
-                    }
-                }
-            }
-        }
-        this.hashesRowsToInsert.push(substrateBlockHashRec)
-
-        if (this.isRelayChain) {
-            //only write stateRoot for relaychain
-            let substrateStateRootRec = {
-                key: relayParentStateRoot,
-                data: {}, //feed/feedunfinalized
-            }
-            let blockfeedWithBlkHash = {
-                chainID: chainID,
-                blockNumber: blockNumber,
-                relayBN: relayBN,
-                relayStateRoot: relayParentStateRoot,
-                blockHash: blockHash,
-                blockType: 'substrate'
-            }
-        }
-
-              
 
         // (3) fuse block+receipt for evmchain, if both evmBlock and evmReceipts are available
         let web3Api = this.web3Api
@@ -6714,11 +4979,10 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
 
                 //let dTxns = await ethTool.processTranssctions(evmBlock.transactions, contractABIs, contractABISignatures)
                 let processTransasctionTS = (new Date().getTime() - processTransasctionStartTS) / 1000
-                this.timeStat.processTransasctionTS += processTransasctionTS
+
 
                 //let dReceipts = await ethTool.processReceipts(evmReceipts, contractABIs, contractABISignatures)
                 let processReceiptTS = (new Date().getTime() - processReceiptStartTS) / 1000
-                this.timeStat.processReceiptTS += processReceiptTS
 
                 let decorateTxnStartTS = new Date().getTime()
                 evmFullBlock = await ethTool.fuseBlockTransactionReceipt(evmBlock, dTxns, dReceipts, evmTrace, chainID)
@@ -6735,7 +4999,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                         // remote execution here
                         if (connectedTxn.msgHash != undefined) {
                             this.sendManagerMessage(connectedTxn, "remoteExecution", finalized);
-                            if (isTip) this.sendWSMessage(connectedTxn, "remoteExecution", finalized)
                         }
                         connectedTxns.push(connectedTxn)
                         evmFullBlock.transactions[connectedTxn.transactionIndex] = connectedTxn
@@ -6744,18 +5007,12 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                     console.log(`[${blockNumber}] connectTransaction`, evmFullBlock.transactionsConnected)
                 }
                 let decorateTxnTS = (new Date().getTime() - decorateTxnStartTS) / 1000
-                this.timeStat.decorateTxnTS += decorateTxnTS
 
                 let processBlockAndReceiptTS = (new Date().getTime() - processBlockAndReceiptStartTS) / 1000
-                this.timeStat.processBlockAndReceiptTS += processBlockAndReceiptTS
-                this.timeStat.processBlockAndReceipt++
 
                 let processEVMFullBlockStartTS = new Date().getTime()
                 await this.processEVMFullBlock(evmFullBlock, evmTrace, chainID, blockNumber, block.finalized, isTip)
                 let processEVMFullBlockTS = (new Date().getTime() - processEVMFullBlockStartTS) / 1000
-                this.timeStat.processEVMFullBlockTS += processEVMFullBlockTS
-                this.timeStat.processEVMFullBlock++
-
             } else {
                 //console.log(`chainID=${chainID} missing web3Api or contractABIs. web3Api(set? ${!web3Api == false}) contractABIs(set? ${!contractABIs == false})`)
             }
@@ -6769,7 +5026,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 let mp = this.xcmmsgMap[xcmKey]
                 if (mp != undefined) {
                     this.xcmTrailingKeyMap[xcmKey].isPreemptive = false // mark the record as preemptive sent
-                    if (isTip) this.sendWSMessage(mp, "xcmmessage", finalized)
                 }
             }
             if (mpKey != undefined && mpKey.isFresh) {
@@ -6779,7 +5035,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 if (mp != undefined) {
                     //console.log(`[Delay=${this.chainParser.parserBlockNumber-mp.blockNumber}] send ${direction} xcmmessage ${mp.msgHash}, isTip=${isTip}, finalized=${finalized}`)
                     this.sendManagerMessage(mp, "xcmmessage", finalized)
-                    if (isTip) this.sendWSMessage(mp, "xcmmessage", finalized)
                 }
                 let extrinsicID = (mp.extrinsicID != undefined) ? `'${mp.extrinsicID}'` : 'NULL'
                 let extrinsicHash = (mp.extrinsicHash != undefined) ? `'${mp.extrinsicHash}'` : 'NULL'
@@ -6816,61 +5071,27 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         }
 
         if (evmFullBlock) {
-
             let evmBlockfeed = {
                 chainID: chainID,
                 blockNumber: blockNumber,
                 blockType: 'evm'
             }
-
             // add evmblockhash pointer for searchability
             let evmBlockhash = evmFullBlock.hash
             // console.log("processBlockEvents added hashesRowsToInsert", evmBlockhash, this.hashesRowsToInsert.length);
             // (4) hashesRowsToInsert: evmFullBlockHash -> evmBlockBN
-            this.stat.hashesRows.evmBlk++
-	    
-            this.hashesRowsToInsert.push(evmBlockHashRec)
+            //this.hashesRowsToInsert.push(evmBlockHashRec)
         }
 
-	await this.store_block(chainID, blockNumber, blockHash, finalized,
-			       { block: JSON.stringify(block),
-				 evmBlock: JSON.stringify(evmBlock)} );
-	
         let blockStats = this.getBlockStats(block, eventsRaw, evmBlock, evmReceipts, autoTraces);
 
         if (recentExtrinsics.length > 0 || recentTransfers.length > 0 || recentXcmMsgs.length > 0) {
             this.add_recent_activity(recentExtrinsics, recentTransfers, recentXcmMsgs)
         }
 
-        return [blockStats, xcmMeta];
+        return blockStats;
     }
 
-    async store_block(chainID, bn, blockHash, finalized, data) {
-	let block = data.block;
-	let evmBlock = data.evmBlock;
-	if ( finalized ) {
-	    let vals = ["blockHash", "feed"];
-	    let out = `('${bn}', '${blockHash}', ${mysql.escape(JSON.stringify(block))} )`
-	    await this.upsertSQL({
-		"table": `block${chainID}`,
-		"keys": ["blockNumber"],
-		"vals": vals,
-		"data": [out],
-		"replace": vals
-            });
-	} else {
-	    let vals = ["feed"];
-	    let out = `('${chainID}', '${bn}', '${blockHash}', ${mysql.escape(JSON.stringify(block))} )`
-	    await this.upsertSQL({
-		"table": "blockunfinalized",
-		"keys": ["chainID", "blockNumber", "blockHash"],
-		"vals": vals,
-		"data": [out],
-		"replace": vals
-            });
-	}
-
-    }
     add_recent_activity(recentExtrinsics, recentTransfers, recentXcmMsgs) {
         for (const r of recentExtrinsics) {
             this.recentExtrinsics.push(r);
@@ -6913,22 +5134,8 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         }
         return feedTransfers
     }
-    /*
-    {
-      "section": "balances",
-      "method": "Transfer",
-      (from, to, value)
-      "data": [
-        "1qnJN7FViy3HZaxZK9tGAA71zxHSBeUweirKqCaox4t8GT7",
-        "1b8tb8N1Nu3CQzF6fctE3p2es7KoMoiWSABe7e4jw22hngm",
-        504494000000
-      ]
-    }
-    */
-
 
     //TODO: no good way to catch token:Deposited / assets:Issued
-    // MK
     async decorateFeedTransfer(pallet, method, data, feed, eventID, blockTS) {
         let chainID = feed.chainID
         let pallet_method = `${pallet}:${method}`
@@ -6959,20 +5166,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
 
                 case "currencies:Transferred":
                 case "tokens:Transfer":
-                    /*
-                    currencies:Transferred [
-                      { token: 'ACA' },
-                      '23M5ttkmR6KcoUwA7NqBjLuMJFWCvobsD9Zy95MgaAECEhit',
-                      '23M5ttkmR6Kco7bReRDve6bQUSAcwqebatp3fWGJYb4hDSDJ',
-                      1205600000000
-                    ]
-                    tokens:Transfer [
-                      { token: 'AUSD' },
-                      '23M5ttkmR6KcnxentoqchgBdUjzMDSzFoUyf5qMs7FsmRMvV',
-                      '25HAjPN9K398DPRWtw2Ad2mpwUACxmM7vyCeG36QotT7qwpt',
-                      13761866984927
-                    ]
-                    */
                     let rAsset = data[0]
 
                     if (rAsset.dexShare != undefined) rAsset = rAsset.dexShare
@@ -7003,7 +5196,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                         decimals = rawAssetDecimals
                         asset = rawAssetString
                         fdata.rawAsset = rawAssetString
-                        //asset = JSON.stringify(rAsset) // keeping liquidCrowdloan for price lookup?
                         /*
                         currencies:Transferred [
                           { liquidCrowdloan: 13 },
@@ -7372,24 +5564,10 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             block: r.block,
             justifications: null
         }
-        if (this.apiAt == undefined || this.apiAt.registry == undefined) {
-            this.logger.error({
-                "op": "decodeRawBlock",
-                "msg": "no apiAt"
-            })
-            process.exit(1);
-        }
         var signedBlock2;
         try {
             signedBlock2 = this.apiAt.registry.createType('SignedBlock', blk);
-        } catch (e) {
-            // try fallback here
-            console.log(`failed with specV=${this.specVersion} [${r.block.number} ${r.block.hash}]`)
-            let chain = await this.setupChainAndAPI(this.chainID); //not sure
-            await this.initApiAtStorageKeys(chain, r.block.hash, r.block.number)
-            signedBlock2 = this.apiAt.registry.createType('SignedBlock', blk);
-        }
-        // signedBlock2.block.extrinsics.forEach((ex, index) => {  console.log(index, ex.hash.toHex());    });
+        } catch (e) {}
         return signedBlock2
     }
 
@@ -7402,8 +5580,8 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         if (isTip == false) return;
         let assetRegistryMetaChain = [paraTool.chainIDKarura, paraTool.chainIDAcala, paraTool.chainIDBifrostKSM, paraTool.chainIDBifrostDOT]
         let assetMetaChain = [paraTool.chainIDAstar, paraTool.chainIDShiden, paraTool.chainIDMoonbeam, paraTool.chainIDMoonriver, paraTool.chainIDHeiko, paraTool.chainIDParallel]
-        if ( false && ( this.chainID == paraTool.chainIDKarura || this.chainID == paraTool.chainIDAcala ||
-			this.chainID == paraTool.chainIDBifrostKSM || this.chainID == paraTool.chainIDBifrostDOT ) ) {
+        if (false && (this.chainID == paraTool.chainIDKarura || this.chainID == paraTool.chainIDAcala ||
+                this.chainID == paraTool.chainIDBifrostKSM || this.chainID == paraTool.chainIDBifrostDOT)) {
             //TODO: chainIDBifrostDOT does not support assetRegistry yet
             if (this.chainID == paraTool.chainIDKarura || this.chainID == paraTool.chainIDAcala) {
                 console.log(`Fetch assetRegistry:assetMetadatas`)
@@ -7418,17 +5596,17 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 console.log(`Fetch assetRegistry:currencyIdToLocations`)
                 await this.chainParser.fetchXCMAssetRegistryLocations(this)
             }
-        } else if (false && ( this.chainID == paraTool.chainIDAstar || this.chainID == paraTool.chainIDShiden || this.chainID == paraTool.chainIDShibuya ||
-            this.chainID == paraTool.chainIDMoonbeam || this.chainID == paraTool.chainIDMoonriver || this.chainID == paraTool.chainIDMoonbaseAlpha || this.chainID == paraTool.chainIDMoonbaseBeta ||
-            this.chainID == paraTool.chainIDHeiko || this.chainID == paraTool.chainIDParallel ||
-            this.chainID == paraTool.chainIDStatemine || this.chainID == paraTool.chainIDStatemint ||
-            this.chainID == paraTool.chainIDPhala || this.chainID == paraTool.chainIDKhala ||
-            this.chainID == paraTool.chainIDHydraDX || this.chainID == paraTool.chainIDBasilisk ||
-            this.chainID == paraTool.chainIDCalamari ||
-            this.chainID == paraTool.chainIDRobonomics ||
-            this.chainID == paraTool.chainIDMangataX ||
-            this.chainID == paraTool.chainIDListen ||
-			      this.chainID == paraTool.chainIDCrustShadow) ) {
+        } else if (false && (this.chainID == paraTool.chainIDAstar || this.chainID == paraTool.chainIDShiden || this.chainID == paraTool.chainIDShibuya ||
+                this.chainID == paraTool.chainIDMoonbeam || this.chainID == paraTool.chainIDMoonriver || this.chainID == paraTool.chainIDMoonbaseAlpha || this.chainID == paraTool.chainIDMoonbaseBeta ||
+                this.chainID == paraTool.chainIDHeiko || this.chainID == paraTool.chainIDParallel ||
+                this.chainID == paraTool.chainIDStatemine || this.chainID == paraTool.chainIDStatemint ||
+                this.chainID == paraTool.chainIDPhala || this.chainID == paraTool.chainIDKhala ||
+                this.chainID == paraTool.chainIDHydraDX || this.chainID == paraTool.chainIDBasilisk ||
+                this.chainID == paraTool.chainIDCalamari ||
+                this.chainID == paraTool.chainIDRobonomics ||
+                this.chainID == paraTool.chainIDMangataX ||
+                this.chainID == paraTool.chainIDListen ||
+                this.chainID == paraTool.chainIDCrustShadow)) {
             await this.chainParser.fetchAsset(this)
             if (this.chainID == paraTool.chainIDHeiko || this.chainID == paraTool.chainIDParallel) {
                 await this.chainParser.fetchAsset(this)
@@ -7458,7 +5636,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         await this.chainParser.getSystemProperties(this, chain);
     }
 
-    
     // given a row r fetched with "fetch_block_row", processes the block, events + trace
     async index_chain_block_row(r, signedBlock = false, write_bq_log = false, refreshAPI = false, isTip = false) {
         /* index_chain_block_row shall process trace(if available) + block + events in orders
@@ -7499,12 +5676,10 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
 
                 let processTraceTS = (new Date().getTime() - processTraceStartTS) / 1000
                 //console.log(`index_chain_block_row: processTrace`, processTraceTS);
-                this.timeStat.processTraceTS += processTraceTS
-                this.timeStat.processTrace++
             }
+        } else {
+            console.log("index_chain_block_row missing block/trace");
         }
-
-
 
         if (r.block && r.events) {
             let decodeRawBlockStartTS = new Date().getTime()
@@ -7512,25 +5687,20 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
                 let decodeRawBlockSignedBlockStartTS = new Date().getTime()
                 signedBlock = await this.decodeRawBlock(r)
                 let decodeRawBlockSignedBlockTS = (new Date().getTime() - decodeRawBlockSignedBlockStartTS) / 1000
-                this.timeStat.decodeRawBlockSignedBlockTS += decodeRawBlockSignedBlockTS
-                this.timeStat.decodeRawBlockSignedBlock++
             }
             r.block.extrinsics = signedBlock.block.extrinsics
             let decodeRawBlockTS = (new Date().getTime() - decodeRawBlockStartTS) / 1000
-            this.timeStat.decodeRawBlockTS += decodeRawBlockTS
-            this.timeStat.decodeRawBlock++
 
             let processBlockEventsStartTS = new Date().getTime()
             //console.log(`calling processBlockEvents evmBlock=${r.evmBlock.number}`)
             let tracesPresent = (r.trace) ? true : false;
-            let [blockStats, xcmMeta] = await this.processBlockEvents(this.chainID, r.block, r.events, r.evmBlock, r.evmReceipts, r.evmTrace, autoTraces, true, write_bq_log, isTip, tracesPresent);
+            let blockStats = await this.processBlockEvents(this.chainID, r.block, r.events, r.evmBlock, r.evmReceipts, r.evmTrace, autoTraces, true, write_bq_log, isTip, tracesPresent);
             r.blockStats = blockStats
-            r.xcmMeta = xcmMeta
 
-            let processBlockEventsTS = (new Date().getTime() - processBlockEventsStartTS) / 1000
-            this.timeStat.processBlockEventsTS += processBlockEventsTS
-            this.timeStat.processBlockEvents++
+        } else {
+            console.log("index_chain_block_row missing block/events");
         }
+
         return r;
     }
 
@@ -7557,69 +5727,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         let transactionsInternal = ethTool.processEVMTrace(rRow['evmTrace'], rRow['evmBlock'].transactions);
         //console.log(evmTrace.length, JSON.stringify(evmTrace, null, 4));
         console.log(transactionsInternal);
-    }
-
-    // fetches a SINGLE row r (of block, events + trace) with fetch_block_row and indexes the row with index_chain_block_row
-    async index_block(chain, blockNumber, blockHash = null) {
-        this.resetErrorWarnings()
-        let elapsedStartTS = new Date().getTime();
-        if (blockHash == undefined){
-            //need to fetch it..
-            blockHash = await this.getBlockHashFinalized(chain.chainID, blockNumber)
-        }
-        await this.setup_chainParser(chain, this.debugLevel);
-        await this.initApiAtStorageKeys(chain, blockHash, blockNumber);
-        this.chainID = chain.chainID;
-        blockNumber = paraTool.dechexToInt(blockNumber)
-        //await this.setupChainAndAPI(chainID);
-
-        try {
-            let statRows = [];
-            let rRow = await this.fetch_block_row(chain, blockNumber);
-            let r = await this.index_chain_block_row(rRow);
-            let blockHash = r.blockHash
-            let parentHash = r.block.header && r.block.header.parentHash ? r.block.header.parentHash : false;
-            let blockTS = r.block.blockTS
-            let blockStats = r.blockStats
-            let numExtrinsics = blockStats && blockStats.numExtrinsics ? blockStats.numExtrinsics : 0
-            let numSignedExtrinsics = blockStats && blockStats.numSignedExtrinsics ? blockStats.numSignedExtrinsics : 0
-            let numTransfers = blockStats && blockStats.numTransfers ? blockStats.numTransfers : 0
-            let numEvents = blockStats && blockStats.numEvents ? blockStats.numEvents : 0
-            let valueTransfersUSD = blockStats && blockStats.valueTransfersUSD ? blockStats.valueTransfersUSD : 0
-            let fees = blockStats && blockStats.fees ? blockStats.fees : 0
-            let feedTS = Math.floor(Date.now() / 1000)
-            let indexTS = Math.floor(blockTS / 3600) * 3600;
-            if (typeof blockTS === "undefined") {
-                blockTS = this.synthetic_blockTS(this.chainID, blockNumber);
-            }
-            if (!parentHash) {
-                console.log("missing parentHash", blockNumber, r.block.header);
-            } else if (blockTS) {
-                let sql = `('${blockNumber}', '${blockHash}', '${parentHash}', FROM_UNIXTIME('${blockTS}'), '${numExtrinsics}', '${numSignedExtrinsics}', '${numTransfers}', '${numEvents}', '${valueTransfersUSD}', '${fees}', FROM_UNIXTIME('${feedTS}'), 0)`
-                statRows.push(sql);
-            }
-            this.dump_update_block_stats(chain.chainID, statRows, indexTS)
-            let elapsedTS = (new Date().getTime() - elapsedStartTS) / 1000
-            await this.flush(indexTS, blockNumber, false, false); //ts, bn, isFullPeriod, isTip
-
-            // errors, warns within this block ..
-            let numIndexingErrors = this.numIndexingErrors;
-            if (this.chainParser) {
-                numIndexingErrors += this.chainParser.numParserErrors;
-            }
-            let numIndexingWarns = this.numIndexingWarns;
-            this.sendManagerStat(numIndexingErrors, numIndexingWarns, elapsedTS)
-            return (r.xcmMeta);
-        } catch (err) {
-            console.log(err);
-            this.logger.warn({
-                "op": "index_block",
-                "chainID": chain.chainID,
-                blockNumber,
-                err
-            })
-            return (false);
-        }
     }
 
     getNativeAsset() {
@@ -7695,363 +5802,10 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         return result;
     }
 
-    async update_xcm_count(daysago = 2) {
-        this.batchedSQL.push(`insert into blocklog (logDT, chainID, numXCMMessagesOut) ( select DATE(from_unixtime(sourceTS)) as logDT, chainID, count(*) as numXCMMessagesOut from xcmmessages where  sourceTS >= UNIX_TIMESTAMP(date_sub(Now(), interval ${daysago} DAY)) and sourceTS > 0 and incoming = 0 and matched = 1 group by logDT, chainID having logDT is not null ) on duplicate key update numXCMMessagesOut = values(numXCMMessagesOut)`);
-        this.batchedSQL.push(`insert into blocklog (logDT, chainID, numXCMMessagesIn) ( select DATE(from_unixtime(destTS)) as logDT, chainIDDest, count(*) as numXCMMessagesIn from xcmmessages where  destTS >= UNIX_TIMESTAMP(date_sub(Now(), interval ${daysago} DAY)) and destTS > 0 and incoming = 1 and matched = 1 group by logDT, chainIDDest having logDT is not null ) on duplicate key update numXCMMessagesIn = values(numXCMMessagesIn) `)
-        this.batchedSQL.push(`insert into blocklog (logDT, chainID, numXCMTransfersOut, valXCMTransferOutgoingUSD) ( select DATE(from_unixtime(sourceTS)) as logDT, chainID, count(*) as numXCMTransfersOut, sum(amountSentUSD) as valXCMTransferOutgoingUSD from xcmtransfer where sourceTS >= UNIX_TIMESTAMP(date_sub(Now(),interval ${daysago} DAY)) and incomplete = 0 and sourceTS > 0 group by logDT, chainID having logDT is not null ) on duplicate key update numXCMTransfersOut = values(numXCMTransfersOut), valXCMTransferOutgoingUSD = values(valXCMTransferOutgoingUSD)`);
-        let sql0 = `insert into blocklog (logDT, chainID, numXCMTransfersIn, valXCMTransferIncomingUSD) ( select DATE(from_unixtime(destTS)) as logDT, chainIDDest, count(*) as numXCMTransfersIn, sum(amountReceivedUSD) as valXCMTransferIncomingUSD from xcmtransfer where sourceTS >= UNIX_TIMESTAMP(date_sub(Now(),interval ${daysago} DAY)) and incomplete = 0 and destTS > 0 group by logDT, chainIDDest having logDT is not null) on duplicate key update numXCMTransfersIn = values(numXCMTransfersIn), valXCMTransferIncomingUSD = values(valXCMTransferIncomingUSD) `
-        this.batchedSQL.push(sql0);
-        await this.update_batchedSQL(10.0);
-    }
+    async update_xcm_count(daysago = 2) {}
 
-    async update_chain_assets(chain, daysago = 2) {
-        try {
-            let chainID = chain.chainID;
-            if (chainID == 0) {
-                await this.update_xcm_count(daysago);
-            }
-            let eflds = ", numTransactionsEVM, numReceiptsEVM, gasUsed, gasLimit, numEVMBlocks";
-            let evals = ", 0, 0, 0, 0, 0";
-            let eupds = ", numTransactionsEVM = values(numTransactionsEVM), numReceiptsEVM = values(numReceiptsEVM), gasUsed = values(gasUsed), gasLimit = values(gasLimit), numEVMBlocks = values(numEVMBlocks)";
-            if (chain.isEVM) {
-                evals = ", sum(numTransactionsEVM), sum(numReceiptsEVM), sum(gasUsed), sum(gasLimit), sum(if(blockHashEVM is Null, 0, 1))";
-            }
+    async update_chain_assets(chain, daysago = 2) {}
 
-            let sql = `insert into blocklog (chainID, logDT, startBN, endBN, numTraces, numExtrinsics, numEvents, numTransfers, numSignedExtrinsics, valueTransfersUSD, fees ${eflds} ) (select ${chainID} as chainID, date(blockDT) as logDT, min(blockNumber), max(blockNumber), sum(if(crawlTrace=0, 1, 0)), sum(numExtrinsics), sum(numEvents), sum(numTransfers), sum(numSignedExtrinsics), sum(valueTransfersUSD), sum(fees) ${evals} from block${chainID} where blockDT is Not Null and blockDT >= date(date_sub(now(), INTERVAL ${daysago} DAY))  group by chainID, logDT) on duplicate key update startBN = values(startBN), endBN = values(endBN), numExtrinsics = values(numExtrinsics), numEvents = values(numEvents), numTransfers = values(numTransfers), numSignedExtrinsics = values(numSignedExtrinsics), valueTransfersUSD = values(valueTransfersUSD), numTraces = values(numTraces), fees = values(fees) ` + eupds;
-            console.log(sql);
-            this.batchedSQL.push(sql);
-            await this.update_batchedSQL(10.0);
-
-            var tbl = `assetholder${chainID}`;
-            this.batchedSQL.push(`insert into asset (asset, chainID, numHolders, totalFree, totalReserved, totalMiscFrozen, totalFrozen) (select asset, chainID, count(*) numHolders, sum(free) as totalFree, sum(reserved) as totalReserved, sum(miscFrozen) as totalMiscFrozen, sum(frozen) as totalFrozen from ${tbl} where chainID = '${chainID}' and free > 0 group by asset, chainID) on duplicate key update numHolders = values(numHolders), totalFree = values(totalFree), totalReserved = values(totalReserved), totalMiscFrozen = values(totalMiscFrozen), totalFrozen = values(totalFrozen)`)
-
-            var tbls = [];
-            if (chain.isEVM) {
-                tbls.push("tokenholder");
-                tbls.push("token1155holder")
-            }
-            for (const tbl of tbls) {
-                this.batchedSQL.push(`insert into asset (asset, chainID, numHolders, totalFree) (select asset, chainID, count(*) numHolders, sum(free) as totalFree from ${tbl} where chainID = '${chainID}' group by asset, chainID) on duplicate key update numHolders = values(numHolders), totalFree = values(totalFree)`)
-                await this.update_batchedSQL();
-            }
-
-            var ranges = [7, 30, 99999];
-            for (const range of ranges) {
-                let f = (range > 9999) ? "" : `${range}d`;
-                let sql0 = `select sum(numTraces) as numTraces, sum(numExtrinsics) as numExtrinsics, sum(numEvents) as numEvents, sum(numTransfers) as numTransfers, sum(numSignedExtrinsics) as numSignedExtrinsics, sum(valueTransfersUSD) as valueTransfersUSD, sum(numTransactionsEVM) as numTransactionsEVM, sum(numReceiptsEVM) as numReceiptsEVM, sum(gasUsed) as gasUsed, sum(gasLimit) as gasLimit, sum(numEVMBlocks) as numEVMBlocks, avg(numAccountsActive) as numAccountsActive, sum(numXCMTransfersIn) as numXCMTransferIncoming, sum(valXCMTransferIncomingUSD) as valXCMTransferIncomingUSD, sum(numXCMTransfersOut) as numXCMTransferOutgoing, sum(valXCMTransferOutgoingUSD) as valXCMTransferOutgoingUSD from blocklog where logDT >= date_sub(Now(),interval ${range} DAY) and chainID = ${chain.chainID}`
-                let stats = await this.poolREADONLY.query(sql0)
-                let out = [];
-                for (const s of stats) {
-                    let valIncoming = s.valXCMTransferIncomingUSD ? s.valXCMTransferIncomingUSD : 0;
-                    let valOutgoing = s.valXCMTransferOutgoingUSD ? s.valXCMTransferOutgoingUSD : 0;
-                    out.push([`('${chain.chainID}', ${s.numTraces}, ${s.numExtrinsics}, ${s.numEvents}, ${s.numTransfers}, ${s.numSignedExtrinsics}, ${s.valueTransfersUSD}, ${s.numTransactionsEVM}, ${s.numReceiptsEVM}, ${s.gasUsed}, ${s.gasLimit}, ${s.numEVMBlocks}, ${s.numAccountsActive}, '${s.numXCMTransferIncoming}', '${valIncoming}', '${s.numXCMTransferOutgoing}', '${valOutgoing}')`])
-                }
-                let vals = [`numTraces${f}`, `numExtrinsics${f}`, `numEvents${f}`, `numTransfers${f}`, `numSignedExtrinsics${f}`, `valueTransfersUSD${f}`, `numTransactionsEVM${f}`, `numReceiptsEVM${f}`, `gasUsed${f}`, `gasLimit${f}`, `numEVMBlocks${f}`, `numAccountsActive${f}`, `numXCMTransferIncoming${f}`, `valXCMTransferIncomingUSD${f}`, `numXCMTransferOutgoing${f}`, `valXCMTransferOutgoingUSD${f}`]
-                await this.upsertSQL({
-                    "table": "chain",
-                    "keys": ["chainID"],
-                    "vals": vals,
-                    "data": out,
-                    "replace": vals
-                });
-            }
-            this.batchedSQL.push(`update chain set lastUpdateChainAssetsTS = FROM_UNIXTIME(Now()) where chainID = ${chain.chainID}`);
-            await this.update_batchedSQL(10.0);
-            return (true);
-        } catch (err) {
-            this.log_indexing_error(err, "update_chain_assets");
-            return (false);
-        }
-    }
-
-    // sets up this.extrinsicsfn/eventsfn/evmtxsfn (deleting old version), creating directories as needed
-    async open_bqlog(chain, indexTS) {
-        const bqDir = "/disk1/"
-        let chainID = chain.chainID;
-        let fn = `${chainID}-${indexTS}.json`
-        let [logDT, hr] = paraTool.ts_to_logDT_hr(indexTS);
-        this.bqlogindexTS = indexTS;
-        try {
-            this.xcmeventsMap = {};
-            // create extrinsics directory
-            let extrinsicsdir = path.join(bqDir, "extrinsics", `${logDT}`);
-            if (!fs.existsSync(extrinsicsdir)) {
-                await fs.mkdirSync(extrinsicsdir);
-            }
-            // set up extrinsics log
-            this.extrinsicsfn = path.join(extrinsicsdir, fn);
-            await fs.closeSync(fs.openSync(this.extrinsicsfn, 'w'));
-
-            // create transfers directory
-            let transfersdir = path.join(bqDir, "transfers", `${logDT}`);
-            if (!fs.existsSync(transfersdir)) {
-                await fs.mkdirSync(transfersdir);
-            }
-            // set up transfers log
-            this.transfersfn = path.join(transfersdir, fn);
-            await fs.closeSync(fs.openSync(this.transfersfn, 'w'));
-
-            // create rewards directory
-            let rewardsdir = path.join(bqDir, "rewards", `${logDT}`);
-            if (!fs.existsSync(rewardsdir)) {
-                await fs.mkdirSync(rewardsdir);
-            }
-            // set up rewards log
-            this.rewardsfn = path.join(rewardsdir, fn);
-            await fs.closeSync(fs.openSync(this.rewardsfn, 'w'));
-
-            // create events directory
-            let eventsdir = path.join(bqDir, "events", `${logDT}`);
-            if (!fs.existsSync(eventsdir)) {
-                await fs.mkdirSync(eventsdir);
-            }
-            // set up event log
-            this.eventsfn = path.join(eventsdir, fn);
-            await fs.closeSync(fs.openSync(this.eventsfn, 'w'));
-
-            // create xcm directory
-            let xcmdir = path.join(bqDir, "xcm", `${logDT}`);
-            if (!fs.existsSync(xcmdir)) {
-                await fs.mkdirSync(xcmdir);
-            }
-            // set up xcm log (deleting old file if exists)
-            this.xcmfn = path.join(xcmdir, fn);
-            await fs.closeSync(fs.openSync(this.xcmfn, 'w'));
-
-            if (chain.isEVM > 0) {
-                // create evmtxs directory
-                let evmtxsdir = path.join(bqDir, "evmtxs", `${logDT}`);
-                if (!fs.existsSync(evmtxsdir)) {
-                    await fs.mkdirSync(evmtxsdir);
-                }
-                // set up evmtxs log (deleting old file if exists)
-                this.evmtxsfn = path.join(evmtxsdir, fn);
-                await fs.closeSync(fs.openSync(this.evmtxsfn, 'w'));
-            }
-        } catch (err) {
-            this.log_indexing_error(err, "open_bqlog");
-        }
-    }
-
-    async write_bqlog_evmblock(txs, blockNumber, blockTS) {
-        if (!txs) return;
-        if (!Array.isArray(txs)) return;
-        if (txs.length == 0) return;
-        let evmtxs = [];
-        txs.forEach((tx) => {
-            if (tx !== undefined) {
-                if (tx.creates != null) {
-                    console.log(tx);
-                }
-
-                let section = null;
-                let methodID = null;
-                let result = 0;
-                let from = null
-                let to = null
-                if (tx.from != undefined) {
-                    from = tx.from.toLowerCase();
-                }
-                if (tx.to != undefined) {
-                    to = tx.to.toLowerCase();
-                }
-                if (tx.decodedInput != undefined) {
-                    let inp = tx.decodedInput;
-                    if (inp.signature != undefined) {
-                        let sa = inp.signature.split("(");
-                        if (sa.length > 1 || ((sa.length == 1) && (sa[0] == "nativeTransfer"))) {
-                            section = sa[0];
-                        }
-                    }
-                    if (inp.methodID != undefined) {
-                        methodID = inp.methodID;
-                    }
-                }
-                if (tx.status) {
-                    result = 1
-                }
-                let ltx = {
-                    c: this.chainID,
-                    bn: blockNumber,
-                    ts: blockTS,
-                    h: tx.transactionHash,
-                    f: from,
-                    t: to,
-                    s: section,
-                    m: methodID,
-                    r: result
-                }
-                if (tx.creates != null) {
-                    ltx.cr = tx.creates; // or 1?
-                }
-                if (tx.substrate != undefined) {
-                    ltx.substrate = tx.substrate;
-                }
-                evmtxs.push(JSON.stringify(ltx));
-            }
-        });
-        if (evmtxs.length > 0) {
-            evmtxs.push("");
-            fs.appendFileSync(this.evmtxsfn, evmtxs.join("\n"));
-        }
-    }
-
-    async write_bqlog_block(extrinsics, blockNumber, blockTS) {
-        let outextrinsics = [];
-        let outevents = [];
-        let outtransfers = [];
-        let outrewards = [];
-        let outxcms = [];
-        if (blockTS < this.bqlogindexTS || (blockTS > this.bqlogindexTS + 3600)) {
-            blockTS = this.bqlogindexTS;
-        }
-        for (let i = 0; i < extrinsics.length; i++) {
-            let ex = extrinsics[i];
-            let signed = (ex.signer != undefined && ex.signer != 'NONE') ? 1 : 0;
-            let fromAddress = paraTool.getPubKey(ex.signer)
-            if (fromAddress === false) fromAddress = null;
-            let v = (ex.v != undefined) ? ex.v : 0;
-            let [exp, exm] = this.parseExtrinsicSectionMethod(ex)
-            outextrinsics.push(JSON.stringify({
-                c: this.chainID,
-                id: ex.extrinsicID,
-                h: ex.extrinsicHash,
-                ts: blockTS,
-                bn: blockNumber,
-                f: fromAddress,
-                p: exp,
-                m: exm,
-                r: ex.result,
-                s: signed,
-                v: v
-            }));
-            if (ex.events) {
-                for (const ev of ex.events) {
-                    let eventID = ev.eventID ? ev.eventID : 0;
-                    let [evp, evm] = this.parseEventSectionMethod(ev)
-                    let e = {
-                        c: this.chainID,
-                        id: eventID,
-                        bn: blockNumber,
-                        h: ex.extrinsicHash,
-                        f: fromAddress,
-                        p: evp,
-                        m: evm,
-                        ts: blockTS
-                    }
-                    outevents.push(JSON.stringify(e));
-                }
-            }
-            if (ex.transfers) {
-                for (const t of ex.transfers) {
-                    let fromAddress = paraTool.getPubKey(t.from)
-                    let toAddress = paraTool.getPubKey(t.to)
-                    let e = {
-                        c: this.chainID,
-                        id: ex.extrinsicID,
-                        bn: blockNumber,
-                        h: ex.extrinsicHash,
-                        f: fromAddress,
-                        t: toAddress,
-                        p: t.section,
-                        m: t.method,
-                        //a: t.amount,
-                        //ra: t.rawAmount,
-                        ts: blockTS
-                    }
-                    if (t.asset != null) e.asset = t.asset;
-                    if (t.rawAsset != null) e.rawAsset = t.rawAsset;
-                    if (t.symbol != null) e.symbol = t.symbol;
-                    if (t.decimals != null) e.d = t.decimals;
-                    if (t.priceUSD > 0) e.priceUSD = t.priceUSD;
-                    if (t.amount != null) e.a = t.amount;
-                    if (t.amountUSD > 0) e.v = t.amountUSD;
-                    outtransfers.push(JSON.stringify(e));
-                }
-            }
-            if (ex.rewards) {
-                for (const t of ex.rewards) {
-                    let toAddress = t.accountAddress
-                    let e = {
-                        c: this.chainID,
-                        id: ex.extrinsicID,
-                        bn: blockNumber,
-                        h: ex.extrinsicHash,
-                        t: toAddress,
-                        p: t.section,
-                        m: t.method,
-                        ts: blockTS
-                    }
-                    if (t.asset != null) e.asset = t.asset;
-                    if (t.rawAsset != null) e.rawAsset = t.rawAsset;
-                    if (t.symbol != null) e.symbol = t.symbol;
-                    if (t.decimals != null) e.d = t.decimals;
-                    if (t.priceUSD > 0) e.priceUSD = t.priceUSD;
-                    if (t.amount != null) e.a = t.amount;
-                    if (t.amountUSD > 0) e.v = t.amountUSD;
-                    outrewards.push(JSON.stringify(e));
-                }
-            }
-        }
-        // map xcmevents into outxcms
-        for (const xcmID of Object.keys(this.xcmeventsMap)) {
-            /*
-            //blockNumber[0]-txIdx[1]-mpType[2]-receiverChainID[3]-senderChainID[4]-msgIdx[5]
-            msgIndex: '2007965-1-xcmp-22000-22023-0',
-            sentAt: 12944867,
-            isIncoming: 1,
-            msgHash: '572c1b16ff2bef5ef0a3d4618a175a5f0bb00409bae210b73d4c339626060aa6',
-            msgHex: '0x0210000400000106080081000fb56e4cba873f410a1300000106080081000fb56e4cba873f41010300286bee0d01000400010100ae70debed84304554c2909745a07d44b8ba4b6de8127e0fb08bc92c52797a00b',
-            msgStr: '{"v2":[{"withdrawAsset":[{"id":{"concrete":{"parents":0,"interior":{"x1":{"generalKey":"0x0081"}}}},"fun":{"fungible":"0x000000000000000000413f87ba4c6eb5"}}]},{"clearOrigin":null},{"buyExecution":{"fees":{"id":{"concrete":{"parents":0,"interior":{"x1":{"generalKey":"0x0081"}}}},"fun":{"fungible":"0x000000000000000000413f87ba4c6eb5"}},"weightLimit":{"limited":4000000000}}},{"depositAsset":{"assets":{"wild":{"all":null}},"maxAssets":1,"beneficiary":{"parents":0,"interior":{"x1":{"accountId32":{"network":{"any":null},"id":"0xae70debed84304554c2909745a07d44b8ba4b6de8127e0fb08bc92c52797a00b"}}}}}}]}'
-            */
-            let mp = this.xcmeventsMap[xcmID]
-            let pieces = mp.msgIndex.split('-')
-            outxcms.push(JSON.stringify({
-                c: this.chainID, // The "receiver" ChainID (xcm chainIDDest)
-                d: pieces[4], // The "sender"   ChainID (xcm chainID)
-                t: pieces[2], // The mptype(Message passing type): xcmp/dmp/ump
-                id: mp.msgIndex, // The identifier: blockNumber-txIdx-mpType-receiverChainID-senderChainID-msgIdx
-                i: mp.isIncoming, // 1:incoming; 2:outgoing
-                h: mp.msgHash, // The blake2_256(msgHex) hash
-                b: mp.msgHex, // The channelmsg byte (xcmp's leading byte is already stripped)
-                s: mp.msgStr, // The decoded channelmsg as XcmVersionedXcm type
-                ts: blockTS,
-                bn: blockNumber,
-                sn: mp.sentAt, // The blockNumber where the channelmsg was received by the relayChain
-                rc: mp.relayChain,
-            }));
-        }
-        this.xcmeventsMap = {};
-
-        //TODO: write the new xcm + clean
-        this.xcmmsgMap = {} // remove here...
-        //this.cleanTrailingXcmMap(blockNumber);
-
-        if (outextrinsics.length > 0) {
-            outextrinsics.push("");
-            await fs.appendFileSync(this.extrinsicsfn, outextrinsics.join("\n"));
-        }
-        if (outevents.length > 0) {
-            outevents.push("");
-            await fs.appendFileSync(this.eventsfn, outevents.join("\n"));
-        }
-        if (outtransfers.length > 0) {
-            outtransfers.push("");
-            await fs.appendFileSync(this.transfersfn, outtransfers.join("\n"));
-        }
-        if (outrewards.length > 0) {
-            outrewards.push("");
-            await fs.appendFileSync(this.rewardsfn, outrewards.join("\n"));
-        }
-        if (outxcms.length > 0) {
-            outxcms.push("");
-            await fs.appendFileSync(this.xcmfn, outxcms.join("\n"));
-        }
-    }
-
-    async close_bqlog() {
-        return (true);
-    }
 
     getSpecVersionAtBlockNumber(chain, bn) {
         if (chain.specVersions == undefined) return (null);
@@ -8069,299 +5823,6 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
         var runtimeVersion = await this.api.rpc.state.getRuntimeVersion();
         this.specVersion = runtimeVersion.toJSON().specVersion;
         return this.specVersion
-    }
-
-    async index_blocks_period(chain, currPeriod = false, jmp = 720) {
-        if (currPeriod == false) return
-        if (!currPeriod.startBN) return
-        if (!currPeriod.endBN) return
-        let chainID = this.chainID
-        let indexTS = currPeriod.indexTS
-        let [logDT, hr] = paraTool.ts_to_logDT_hr(indexTS);
-        let indexStartTS = new Date().getTime();
-        let specVersion = false
-
-        await this.setup_chainParser(chain, this.debugLevel);
-        this.resetErrorWarnings()
-        // NOTE: we do not set this.tallyAsset = {}
-
-        this.currentPeriodKey = indexTS;
-        this.invertedHourKey = paraTool.inverted_ts_key(indexTS);
-        if (currPeriod.eventsperblock > 50 || currPeriod.extrinsicsperblock > 30) {
-            console.log(`WARNING: high usage block [jmp=${jmp}]`, currPeriod);
-        }
-        let nativeAsset = this.getNativeAsset()
-        const tableChain = this.instance.table("chain" + chainID);
-        let batchN = 0
-        let totalBlkCnt = 1 + currPeriod.endBN - currPeriod.startBN
-        let totalBatch = Math.floor(totalBlkCnt / jmp)
-        if (totalBlkCnt % jmp != 0) totalBatch++
-
-        let refreshAPI = false;
-        await this.open_bqlog(chain, indexTS)
-        for (let bn = currPeriod.startBN; bn <= currPeriod.endBN; bn += jmp) {
-            batchN++
-            let jmpStartTS = new Date().getTime();
-            let startBN = bn
-            let endBN = bn + jmp - 1;
-            if (endBN > currPeriod.endBN) endBN = currPeriod.endBN;
-
-            let start = paraTool.blockNumberToHex(startBN);
-            let end = paraTool.blockNumberToHex(endBN);
-
-            console.log(`\nindex_blocks_period chainID=${chainID}, ${startBN}(${start}), ${endBN}(${end}), indexTS=${indexTS} [${logDT} ${hr}] [${batchN}/${totalBatch}]`)
-
-            let families = ["finalized", "trace", "autotrace", "blockraw", "events", "n"]
-            if (chain.isEVM > 0) {
-                families.push("blockrawevm");
-            }
-            let startTS = new Date().getTime();
-            let [rows] = await tableChain.getRows({
-                start,
-                end,
-                cellLimit: 1,
-                family: families
-            });
-            let getRowsTS = (new Date().getTime() - startTS) / 1000;
-            console.log("index_blocks_period: get rows", getRowsTS);
-            this.timeStat.getRowsTS += getRowsTS
-            this.timeStat.getRows++
-
-            startTS = new Date().getTime();
-            let startSpecVersion, endSpecVersion, endSpecVersionStartBN = null,
-                endSpecVersionStartBlockHash = null;
-            if (specVersion == false) {
-                for (let j = 0; j < rows.length; j++) {
-                    let row = rows[j];
-                    let rowData = row.data;
-                    if (rowData["finalized"]) {
-                        this.timeStat.getRuntimeVersion++
-                        for (const blockHash of Object.keys(rowData["finalized"])) {
-                            let _specVersion = await this.initApiAtStorageKeys(chain, blockHash, bn);
-                            if (_specVersion != undefined) {
-                                startSpecVersion = _specVersion;
-                                endSpecVersion = _specVersion;
-                                j = rows.length;
-                                break;
-                            }
-                        }
-                    }
-                }
-                let endSV = this.getSpecVersionAtBlockNumber(chain, currPeriod.endBN);
-                if (endSV != null) {
-                    endSpecVersion = endSV.specVersion;
-                    endSpecVersionStartBN = endSV.blockNumber;
-                    endSpecVersionStartBlockHash = endSV.blockHash;
-                    if (startSpecVersion != endSpecVersion) {
-                        refreshAPI = true; // Note: you could also set this flag more aggressively: on runtime upgrades, not just specVersion changes
-                    }
-                }
-                if (refreshAPI) console.log("**** REFRESHAPI", startSpecVersion, endSpecVersion, currPeriod.endBN, refreshAPI);
-                if (this.apiAt == undefined) {
-                    this.logger.error({
-                        "op": "index_blocks_period",
-                        "msg": "no apiAt",
-                        chainID,
-                        logDT,
-                        hr
-                    })
-                    console.log(err);
-                    process.exit(1);
-                }
-            }
-            let getRuntimeVersionTS = (new Date().getTime() - startTS) / 1000
-            if (getRuntimeVersionTS > 1) console.log("index_blocks_period: getRuntimeVersion", getRuntimeVersionTS);
-            this.timeStat.getRuntimeVersionTS += getRuntimeVersionTS
-
-            startTS = new Date().getTime();
-
-            let statRows = [];
-            for (let i = 0; i < rows.length; i++) {
-                try {
-                    let buildBlockFromRowStartTS = new Date().getTime()
-                    let row = rows[i];
-                    let rRow = this.build_block_from_row(row) // build "rRow" here so we pass in the same struct as fetch_block_row
-                    let buildBlockFromRowTS = (new Date().getTime() - buildBlockFromRowStartTS) / 1000
-                    this.timeStat.buildBlockFromRowTS += buildBlockFromRowTS
-                    this.timeStat.buildBlockFromRow++
-                    let r = await this.index_chain_block_row(rRow, false, true, refreshAPI);
-
-                    let blockNumber = r.blockNumber
-                    let blockHash = r.blockHash
-                    let parentHash = r.block.header && r.block.header.parentHash ? r.block.header.parentHash : false;
-                    let blockTS = r.block.blockTS
-                    let blockStats = r.blockStats
-                    let numExtrinsics = blockStats && blockStats.numExtrinsics ? blockStats.numExtrinsics : 0
-                    let numSignedExtrinsics = blockStats && blockStats.numSignedExtrinsics ? blockStats.numSignedExtrinsics : 0
-                    let numTransfers = blockStats && blockStats.numTransfers ? blockStats.numTransfers : 0
-                    let numEvents = blockStats && blockStats.numEvents ? blockStats.numEvents : 0
-                    let numTraceRecords = blockStats && blockStats.numTraceRecords ? blockStats.numTraceRecords : 0;
-                    let valueTransfersUSD = blockStats && blockStats.valueTransfersUSD ? blockStats.valueTransfersUSD : 0
-                    this.setLoggingContext({
-                        chainID: chain.chainID,
-                        blockNumber
-                    });
-                    let feedTS = Math.floor(Date.now() / 1000)
-                    if (typeof blockTS === "undefined") {
-                        blockTS = this.synthetic_blockTS(this.chainID, blockNumber);
-                    }
-                    if (!parentHash) {
-                        console.log("missing parentHash", blockNumber, r.block.header);
-                    } else if (blockTS) {
-                        let sql = `('${blockNumber}', '${blockHash}', '${parentHash}', FROM_UNIXTIME('${blockTS}'), '${numExtrinsics}', '${numSignedExtrinsics}', '${numTransfers}', '${numEvents}', '${valueTransfersUSD}', '${numTraceRecords}', FROM_UNIXTIME('${feedTS}'), 0)`
-                        statRows.push(sql);
-                    }
-                    if (r != undefined) r = null
-                } catch (err) {
-                    this.log_indexing_error(err, `index_blocks_period`);
-                }
-            }
-            let indexChainBlockRowTS = (new Date().getTime() - startTS) / 1000
-            console.log(`index_blocks_period: index_chain_block_row ${rows.length} blocks`, indexChainBlockRowTS);
-            this.timeStat.indexChainBlockRowTS += indexChainBlockRowTS
-            this.timeStat.indexChainBlockRow++
-
-            this.showCurrentMemoryUsage()
-            this.dump_update_block_stats(chainID, statRows, indexTS)
-            if (true) {
-                //flush hashesRows
-                startTS = new Date().getTime();
-                await this.immediateFlushBlockAndAddressExtrinsics(false)
-                let immediateFlushTS = (new Date().getTime() - startTS) / 1000
-                this.timeStat.immediateFlushTS += immediateFlushTS
-                this.timeStat.immediateFlush++
-                this.timeStat.flush_f_TS += immediateFlushTS
-                console.log(`index_blocks_period(jmp=${jmp}) flush HashesRows + BlockRows`, immediateFlushTS);
-            }
-            if (jmp <= 50 && false) {
-                //todo: no reason to store hashesRows here. should flush immediately
-                startTS = new Date().getTime();
-                await this.flush(indexTS, endBN, false, false); //ts, bn, isFullPeriod, isTip
-                let tinyFlushTS = (new Date().getTime() - startTS) / 1000
-                console.log(`index_blocks_period(jmp=${jmp}): tiny flush`, tinyFlushTS);
-            }
-            let indexJmpTS = (new Date().getTime() - jmpStartTS) / 1000
-            this.timeStat.indexJmpTS += indexJmpTS
-            this.timeStat.indexJmp++
-            this.showTimeUsage()
-        }
-
-        // flush out the hour of data to BT
-        let finalFlushStartTS = new Date().getTime();
-        await this.flush(indexTS, currPeriod.endBN, true, false); //ts, bn, isFullPeriod, isTip
-        let finalFlushTS = (new Date().getTime() - finalFlushStartTS) / 1000
-        if (this.debugLevel >= paraTool.debugVerbose) console.log("index_blocks_period: total flush(a-f)", finalFlushTS);
-        this.showTimeUsage()
-
-        await this.close_bqlog();
-        // record a record in indexlog
-        let numIndexingErrors = this.numIndexingErrors;
-        if (this.chainParser) {
-            numIndexingErrors += this.chainParser.numParserErrors;
-        }
-        let indexed = (numIndexingErrors == 0) ? 1 : 0;
-        // mark relaychain period's xcmIndexed = 0 and xcmReadyForIndexing = 1 if indexing is successful and without errors.
-        // this signals that the record is reeady for indexReindexXcm
-        let xcmReadyForIndexing = (this.isRelayChain && indexed)? 1 : 0;
-        let numIndexingWarns = this.numIndexingWarns;
-        let elapsedSeconds = (new Date().getTime() - indexStartTS) / 1000
-        await this.upsertSQL({
-            "table": "indexlog",
-            "keys": ["chainID", "indexTS"],
-            "vals": ["logDT", "hr", "indexDT", "elapsedSeconds", "indexed", "readyForIndexing", "specVersion", "bqExists", "numIndexingErrors", "numIndexingWarns", "xcmIndexed", "xcmReadyForIndexing"],
-            "data": [`('${chainID}', '${indexTS}', '${logDT}', '${hr}', Now(), '${elapsedSeconds}', '${indexed}', 1, '${this.specVersion}', 1, '${numIndexingErrors}', '${numIndexingWarns}', 0, '${xcmReadyForIndexing}')`],
-            "replace": ["logDT", "hr", "indexDT", "elapsedSeconds", "indexed", "readyForIndexing", "specVersion", "bqExists", "numIndexingErrors", "numIndexingWarns", "xcmIndexed", "xcmReadyForIndexing"]
-        });
-
-        await this.update_batchedSQL();
-        this.logger.info({
-            op: "index_blocks_period",
-            numIndexingErrors: numIndexingErrors,
-            numIndexingWarns: numIndexingWarns,
-            elapsedSeconds: elapsedSeconds,
-            chainID,
-            logDT
-        });
-        console.log(`index_blocks_period(jmp=${jmp}) - Final ElapsedSeconds=${elapsedSeconds}`);
-        this.resetTimeUsage()
-        return elapsedSeconds
-    }
-
-
-
-    resetHashRowStat() {
-        let newHashesRows = {
-            substrateBlk: 0,
-            evmBlk: 0,
-            substrateTx: 0,
-            evmTx: 0,
-            evmTxPerBlk: [],
-            substrateTxPerBlk: [],
-        }
-        this.stat.hashesRows = newHashesRows
-    }
-
-    resetAddressRowStat() {
-        let newAddressRows = {
-            uniqueAddr: 0,
-            uniqueEVMAddr: 0,
-            uniqueSubstrateAddr: 0,
-            realtime: 0,
-            history: 0,
-            feed: 0,
-            feedunfinalized: 0,
-            feedtransfer: 0,
-            feedreward: 0,
-            feedcrowdloan: 0,
-            xcmsend: 0,
-            xcmreceive: 0,
-        }
-        this.stat.addressRows = newAddressRows
-    }
-
-    resetAddressStorageStat() {
-        let newAddressStorage = {
-            uniqueAddr: 0
-        }
-        this.stat.addressStorage = newAddressStorage
-    }
-
-    resetAssetholderStat() {
-        let newAssetholder = {
-            unique: 0,
-            read: 0,
-            write: 0,
-            update: 0,
-        }
-        this.stat.assetholder = newAssetholder
-    }
-
-    resetAssetChainMap() {
-        this.assetChainMap = {}
-    }
-
-    resetAddressStats() {
-        this.resetAddressRowStat()
-        this.resetAddressStorageStat()
-        this.resetAssetholderStat()
-    }
-
-    async dump_update_block_stats(chainID, statRows, indexTS) {
-        let i = 0;
-        for (i = 0; i < statRows.length; i += 10000) {
-            let j = i + 10000;
-            if (j > statRows.length) j = statRows.length;
-            await this.upsertSQL({
-                "table": `block${chainID}`,
-                "keys": ["blockNumber"],
-                "vals": ["blockHash", "parentHash", "blockDT", "numExtrinsics", "numSignedExtrinsics", "numTransfers", "numEvents", "valueTransfersUSD", "numTraceRecords", "lastFeedDT", "crawlFeed"],
-                "data": statRows.slice(i, j),
-                "replace": ["numExtrinsics", "numSignedExtrinsics", "numTransfers", "numEvents", "valueTransfersUSD", "blockHash", "parentHash", "numTraceRecords", "lastFeedDT", "crawlFeed"],
-                "replaceIfNull": ["blockDT"]
-            });
-        }
-        let [logDT, hr] = paraTool.ts_to_logDT_hr(indexTS);
-        //console.log(`dump_update_block_stats indexTS=${indexTS} [${logDT} ${hr}] len=${statRows.length}`);
     }
 
     // goal: lookup index m which is LESS than el and n which IS element, and return n
@@ -8447,6 +5908,4 @@ from assetholder${chainID} as assetholder, asset where assetholder.asset = asset
             await this.update_spec_version(chain.chainID, specVersion);
         }
     }
-
-
 }
