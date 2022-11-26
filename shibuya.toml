@@ -33,7 +33,7 @@ cumulus_based = true
 
   [[parachains.collators]]
   name = "collator1"
-  command = "./astar-collator"
+  command = "./custom-desc-orig-astar-collator"
   rpc_port = 8545
   args = [ "-l=xcm=trace" ]
 
@@ -46,7 +46,7 @@ cumulus_based = true
 
   [[parachains.collators]]
   name = "collator2"
-  command = "./astar-collator"
+  command = "./custom-desc-orig-astar-collator"
   rpc_port = 8546
   args = [ "-l=xcm=trace" ]
 
